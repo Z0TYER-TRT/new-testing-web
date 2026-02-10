@@ -1,6 +1,7 @@
 services:
   - type: web
     name: redirect-page
-    env: static
-    buildCommand: echo "Building redirect page..."
-    staticPublishPath: ./
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
