@@ -7,7 +7,7 @@ console.log('Server starting...');
 
 // Middleware
 app.use(express.static('public'));
-app.use(express.json()); // For parsing JSON bodies
+app.use(express.json());
 console.log('Middleware loaded');
 
 // In-memory storage for sessions
