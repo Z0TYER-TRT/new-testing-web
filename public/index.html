@@ -6,38 +6,25 @@
     <title>Processing Your Request</title>
     <meta name="robots" content="noindex, nofollow">
     <link rel="stylesheet" href="/style.css">
-    <style>
-        /* Basic fallback styles */
-        body { 
-            font-family: Arial, sans-serif; 
-            background: #667eea; 
-            color: white; 
-            text-align: center; 
-            padding: 50px; 
-        }
-        .container { 
-            background: white; 
-            color: black; 
-            padding: 20px; 
-            border-radius: 10px; 
-            max-width: 500px; 
-            margin: 0 auto; 
-        }
-    </style>
 </head>
 <body>
     <div class="container">
-        <h1>Testing Redirect Page</h1>
-        <p>If you see styled content, CSS is working!</p>
-        <div id="js-test">JavaScript is NOT working</div>
+        <div class="content">
+            <div class="loader"></div>
+            <h2>🔗 Processing Your Request</h2>
+            <p>Verifying your access and preparing your link...</p>
+            <div class="progress-bar">
+                <div class="progress" id="progress"></div>
+            </div>
+            <p class="countdown">Redirecting in <span id="countdown">3</span> seconds</p>
+            <p id="status-message">Please wait...</p>
+            <noscript>
+                <p class="error">JavaScript is required for automatic redirection.</p>
+                <button id="manualRedirect" class="btn" style="display:none;">Continue Manually</button>
+            </noscript>
+        </div>
     </div>
 
     <script src="/script.js"></script>
-    <script>
-        // Test if JavaScript is working
-        document.getElementById('js-test').innerHTML = 'JavaScript IS working!';
-        document.getElementById('js-test').style.color = 'green';
-        console.log('JavaScript loaded successfully');
-    </script>
 </body>
 </html>
