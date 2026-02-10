@@ -11,9 +11,9 @@ document.addEventListener('selectstart', e => e.preventDefault());
 const pathParts = window.location.pathname.split('/');
 const sessionId = pathParts[pathParts.length - 1];
 const countdownElement = document.getElementById('countdown');
-const progressBar = document.querySelector('.progress');
+const progressBar = document.getElementById('progress');
 const manualRedirectBtn = document.getElementById('manualRedirect');
-const statusMessage = document.querySelector('.content p:nth-child(3)');
+const statusMessage = document.getElementById('status-message');
 
 let countdown = 3;
 
@@ -54,12 +54,12 @@ async function redirectToDestination() {
 }
 
 function showError(message) {
-    const heading = document.querySelector('h1') || document.querySelector('h2');
+    const heading = document.querySelector('h2');
     if (heading) {
         heading.textContent = 'Access Denied';
     }
     
-    const messageElement = document.querySelector('p');
+    const messageElement = document.querySelectorAll('p')[1]; // Second paragraph
     if (messageElement) {
         messageElement.innerHTML = `${message}<br>Please contact support.`;
     }
@@ -69,7 +69,7 @@ function showError(message) {
         countdownDisplay.style.display = 'none';
     }
     
-    if (progressBar) {
+    if (progressBar && progressBar.parentElement) {
         progressBar.parentElement.style.display = 'none';
     }
     
@@ -112,7 +112,7 @@ if (sessionId && sessionId !== 'access') {
         countdownDisplay.style.display = 'none';
     }
     
-    if (progressBar) {
+    if (progressBar && progressBar.parentElement) {
         progressBar.parentElement.style.display = 'none';
     }
     
