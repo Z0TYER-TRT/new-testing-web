@@ -3,32 +3,218 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Redirecting...</title>
-    <meta name="description" content="Redirecting to your destination...">
-    <link rel="stylesheet" href="style.css">
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🔗</text></svg>">
+    <title>Processing Your Request</title>
+    <meta name="robots" content="noindex, nofollow">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 40px;
+            text-align: center;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            max-width: 500px;
+            width: 90%;
+        }
+
+        .loader {
+            width: 50px;
+            height: 50px;
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        h2 {
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 1.8rem;
+        }
+
+        p {
+            color: #666;
+            margin-bottom: 20px;
+            line-height: 1.6;
+        }
+
+        .countdown {
+            font-weight: bold;
+            color: #667eea;
+            font-size: 1.1rem;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background-color: #f0f0f0;
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 20px 0;
+        }
+
+        .progress {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            width: 0%;
+            transition: width 3s linear;
+            border-radius: 4px;
+        }
+
+        .error {
+            color: #e74c3c;
+            font-weight: bold;
+        }
+
+        .success {
+            color: #27ae60;
+            font-weight: bold;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin-top: 10px;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        footer {
+            text-align: center;
+            padding: 20px;
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 0.9rem;
+            position: absolute;
+            bottom: 0;
+            width: 100%;
+        }
+
+        @media (max-width: 600px) {
+            .container {
+                padding: 30px 20px;
+            }
+            
+            h2 {
+                font-size: 1.5rem;
+            }
+        }
+    </style>
 </head>
 <body>
     <div class="container">
-        <div class="content">
-            <div class="loader"></div>
-            <h1>Preparing Your Link</h1>
-            <p>You're being redirected to your destination...</p>
-            <div class="progress-bar">
-                <div class="progress"></div>
-            </div>
-            <p class="countdown">Redirecting in <span id="countdown">3</span> seconds</p>
-            <noscript>
-                <p class="error">JavaScript is required for automatic redirection.</p>
-                <button id="manualRedirect" class="btn">Continue Manually</button>
-            </noscript>
+        <div class="loader"></div>
+        <h2>🔗 Processing Your Request</h2>
+        <p>Verifying your access and preparing your link...</p>
+        <div class="progress-bar">
+            <div class="progress" id="progress"></div>
         </div>
+        <p class="countdown">Redirecting in <span id="countdown">3</span> seconds</p>
+        <p id="status-message">Please wait...</p>
+        <noscript>
+            <p class="error">JavaScript is required for automatic redirection.</p>
+            <button id="manualRedirect" class="btn" style="display:none;">Continue Manually</button>
+        </noscript>
     </div>
-    
-    <footer>
-        <p>Powered by Your Bot Service</p>
-    </footer>
 
-    <script src="script.js"></script>
+    <script>
+        // Anti-copy protection
+        document.addEventListener('contextmenu', event => event.preventDefault());
+        document.addEventListener('keydown', function(e) {
+            if (e.ctrlKey && (e.key === 'c' || e.key === 'C' || e.key === 'a' || e.key === 'A' || e.key === 'u' || e.key === 'U')) {
+                e.preventDefault();
+            }
+        });
+        document.addEventListener('selectstart', e => e.preventDefault());
+
+        // Session processing
+        const pathParts = window.location.pathname.split('/');
+        const sessionId = pathParts[pathParts.length - 1];
+        
+        if (!sessionId || sessionId === 'access') {
+            document.querySelector('h2').textContent = 'Invalid Request';
+            document.querySelector('p').innerHTML = 'No session ID provided.<br>Please go back to the bot and try again.';
+            document.querySelector('.countdown').style.display = 'none';
+            document.querySelector('#progress').parentElement.style.display = 'none';
+        } else {
+            // Start progress bar
+            document.querySelector('#progress').style.width = '100%';
+            
+            // Countdown and redirect
+            let countdown = 3;
+            const countdownElement = document.getElementById('countdown');
+            const statusMessage = document.getElementById('status-message');
+            
+            const countdownInterval = setInterval(() => {
+                countdown--;
+                countdownElement.textContent = countdown;
+                
+                if (countdown <= 0) {
+                    clearInterval(countdownInterval);
+                    statusMessage.innerHTML = '<span class="success">Redirecting now...</span>';
+                    
+                    // Make AJAX request to get redirect URL
+                    fetch(`/api/process-session/${sessionId}`)
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.success && data.redirect_url) {
+                                // Successful redirect
+                                setTimeout(() => {
+                                    window.location.href = data.redirect_url;
+                                }, 500);
+                            } else {
+                                // Error handling
+                                document.querySelector('h2').textContent = 'Access Denied';
+                                document.querySelector('p').innerHTML = data.message || 'Invalid or expired session.<br>Please go back to the bot and try again.';
+                                document.querySelector('.countdown').style.display = 'none';
+                                document.querySelector('#progress').parentElement.style.display = 'none';
+                                document.querySelector('#manualRedirect').style.display = 'inline-block';
+                                document.querySelector('#manualRedirect').onclick = () => {
+                                    alert('Session expired. Please request a new link from the bot.');
+                                };
+                            }
+                        })
+                        .catch(error => {
+                            document.querySelector('h2').textContent = 'Connection Error';
+                            document.querySelector('p').innerHTML = 'Failed to process request.<br>Please try again later.';
+                            document.querySelector('.countdown').style.display = 'none';
+                            document.querySelector('#progress').parentElement.style.display = 'none';
+                        });
+                }
+            }, 1000);
+        }
+    </script>
 </body>
 </html>
