@@ -5,10 +5,24 @@ const PORT = process.env.PORT || 3000;
 
 console.log('Server starting...');
 
-// Middleware - Serve static files FIRST
+// Explicitly serve static files with logging
+app.use('/style.css', (req, res) => {
+    console.log('Serving style.css');
+    res.sendFile(path.join(__dirname, 'public', 'style.css'));
+});
+
+app.use('/script.js', (req, res) => {
+    console.log('Serving script.js');
+    res.sendFile(path.join(__dirname, 'public', 'script.js'));
+});
+
+// Serve other static files (images, etc.)
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Parse JSON bodies
 app.use(express.json());
-console.log('Static files middleware loaded');
+
+console.log('Middleware loaded');
 
 // In-memory storage for sessions
 const activeSessions = new Map();
@@ -82,15 +96,16 @@ app.get('/api/process-session/:sessionId', (req, res) => {
     }
 });
 
-// Root route
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-// SPECIFIC route for access pages - Place this AFTER static file serving
+// Access route
 app.get('/access/:sessionId', (req, res) => {
     const sessionId = req.params.sessionId;
     console.log('Access page requested for session:', sessionId);
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Root route
+app.get('/', (req, res) => {
+    console.log('Root page requested');
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
