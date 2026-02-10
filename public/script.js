@@ -1,15 +1,29 @@
 // Anti-copy protection
-document.addEventListener('contextmenu', event => event.preventDefault());
+console.log('=== SCRIPT LOADING ===');
+document.addEventListener('contextmenu', event => {
+    console.log('Context menu blocked');
+    event.preventDefault();
+});
+
 document.addEventListener('keydown', function(e) {
+    // Prevent common copy shortcuts
     if (e.ctrlKey && (e.key === 'c' || e.key === 'C' || e.key === 'a' || e.key === 'A' || e.key === 'u' || e.key === 'U')) {
+        console.log('Keyboard shortcut blocked:', e.key);
         e.preventDefault();
     }
 });
-document.addEventListener('selectstart', e => e.preventDefault());
+
+document.addEventListener('selectstart', e => {
+    console.log('Text selection blocked');
+    e.preventDefault();
+});
 
 // Get session ID from URL path
 const pathParts = window.location.pathname.split('/');
 const sessionId = pathParts[pathParts.length - 1];
+console.log('Session ID from URL:', sessionId);
+
+// Get DOM elements
 const countdownElement = document.getElementById('countdown');
 const progressBar = document.getElementById('progress');
 const manualRedirectBtn = document.getElementById('manualRedirect');
@@ -19,17 +33,40 @@ let countdown = 3;
 
 // Function to redirect via server-side verification
 async function redirectToDestination() {
+    console.log('=== STARTING REDIRECT PROCESS ===');
+    console.log('Session ID:', sessionId);
+    
     if (sessionId && sessionId !== 'access') {
         try {
             if (statusMessage) {
                 statusMessage.innerHTML = 'Verifying your access...';
             }
+            console.log('Calling API: /api/process-session/' + sessionId);
+            
+            // Show loading state
+            document.body.style.cursor = 'wait';
             
             // Call server API to get redirect URL and verify session
-            const response = await fetch(`/api/process-session/${sessionId}`);
+            const response = await fetch(`/api/process-session/${sessionId}`, {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+            
+            console.log('API Response status:', response.status);
+            
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
             const data = await response.json();
+            console.log('API Response data:', data);
             
             if (data.success && data.redirect_url) {
+                console.log('✅ SUCCESS: Redirecting to', data.redirect_url);
+                
+                // Update UI
                 if (progressBar) {
                     progressBar.style.width = '100%';
                 }
@@ -38,22 +75,34 @@ async function redirectToDestination() {
                     statusMessage.innerHTML = '<span class="success">Verified! Redirecting...</span>';
                 }
                 
+                // Reset cursor
+                document.body.style.cursor = 'default';
+                
+                // Redirect after a short delay to allow visual feedback
                 setTimeout(() => {
+                    console.log('WINDOW LOCATION CHANGE:', data.redirect_url);
                     window.location.href = data.redirect_url;
-                }, 500);
+                }, 1000);
             } else {
+                console.log('❌ API ERROR:', data.message);
+                // Reset cursor
+                document.body.style.cursor = 'default';
                 showError(data.message || 'Invalid or expired session. Please request a new link from the bot.');
             }
         } catch (error) {
-            showError('Connection error. Please try again.');
-            console.error('Redirect error:', error);
+            console.error('❌ FETCH ERROR:', error);
+            // Reset cursor
+            document.body.style.cursor = 'default';
+            showError('Connection error. Please try again. Error: ' + error.message);
         }
     } else {
+        console.log('❌ INVALID SESSION ID');
         showError('No session ID provided. Please go back to the bot and try again.');
     }
 }
 
 function showError(message) {
+    console.log('SHOWING ERROR:', message);
     const heading = document.querySelector('h2');
     if (heading) {
         heading.textContent = 'Access Denied';
@@ -82,11 +131,15 @@ function showError(message) {
     }
 }
 
+// Manual redirect button event listener
 if (manualRedirectBtn) {
     manualRedirectBtn.addEventListener('click', redirectToDestination);
 }
 
+// Auto redirect with countdown
 if (sessionId && sessionId !== 'access') {
+    console.log('Starting auto-redirect countdown...');
+    
     if (progressBar) {
         progressBar.style.width = '100%';
     }
@@ -99,6 +152,7 @@ if (sessionId && sessionId !== 'access') {
         
         if (countdown <= 0) {
             clearInterval(countdownInterval);
+            console.log('Countdown finished, starting redirect...');
             redirectToDestination();
         }
     }, 1000);
@@ -107,6 +161,7 @@ if (sessionId && sessionId !== 'access') {
         statusMessage.innerHTML = 'Preparing your link...';
     }
 } else {
+    console.log('Invalid session ID, showing error');
     const countdownDisplay = document.querySelector('.countdown');
     if (countdownDisplay) {
         countdownDisplay.style.display = 'none';
@@ -119,6 +174,13 @@ if (sessionId && sessionId !== 'access') {
     showError('Invalid request. No session ID found.');
 }
 
+// DOM ready event
 document.addEventListener('DOMContentLoaded', function() {
+    console.log('DOM fully loaded and parsed');
     document.body.style.backgroundColor = '#667eea';
+});
+
+// Window load event
+window.addEventListener('load', function() {
+    console.log('Window fully loaded');
 });
