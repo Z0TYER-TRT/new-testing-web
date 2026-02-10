@@ -5,7 +5,7 @@ const PORT = process.env.PORT || 3000;
 
 console.log('Server starting...');
 
-// Middleware - Serve static files from public directory
+// Middleware - Serve static files FIRST
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
 console.log('Static files middleware loaded');
@@ -82,23 +82,15 @@ app.get('/api/process-session/:sessionId', (req, res) => {
     }
 });
 
-// SPECIFIC route for access pages - Only match valid session IDs
-app.get('/access/:sessionId', (req, res) => {
-    const sessionId = req.params.sessionId;
-    console.log('Access page requested for session:', sessionId);
-    
-    // Check if this looks like a file extension request (static file)
-    if (sessionId.includes('.') && !sessionId.match(/^[A-Za-z0-9_-]+$/)) {
-        // This looks like a static file request, redirect to home or serve index
-        return res.redirect('/');
-    }
-    
-    // Serve the main HTML page
+// Root route
+app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Root route
-app.get('/', (req, res) => {
+// SPECIFIC route for access pages - Place this AFTER static file serving
+app.get('/access/:sessionId', (req, res) => {
+    const sessionId = req.params.sessionId;
+    console.log('Access page requested for session:', sessionId);
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
