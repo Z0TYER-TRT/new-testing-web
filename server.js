@@ -241,6 +241,50 @@ app.use((req, res, next) => {
   next();
 });
 
+// TEST ENDPOINT - Create a test session
+app.get('/debug/test-session', async (req, res) => {
+  const testSessionId = 'test-' + Date.now();
+  const testShortUrl = 'https://example.com/test';
+  
+  console.log('🧪 Creating test session:', testSessionId);
+  
+  try {
+    if (sessionsCollection) {
+      const result = await sessionsCollection.updateOne(
+        { session_id: testSessionId },
+        { 
+          $set: {
+            session_id: testSessionId,
+            short_url: testShortUrl,
+            created_at: new Date(),
+            used: false
+          }
+        },
+        { upsert: true }
+      );
+      
+      console.log('🧪 Test session created:', result);
+      
+      // Verify it was stored
+      const storedSession = await sessionsCollection.findOne({ session_id: testSessionId });
+      console.log('🧪 Stored session verification:', storedSession);
+      
+      res.json({
+        success: true,
+        session_id: testSessionId,
+        stored: !!storedSession,
+        result: result,
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      res.json({ success: false, error: 'No database connection' });
+    }
+  } catch (error) {
+    console.error('🧪 Test session error:', error);
+    res.json({ success: false, error: error.message });
+  }
+});
+
 // DEBUG ENDPOINTS
 app.get('/debug/session/:sessionId', async (req, res) => {
   const sessionId = req.params.sessionId;
@@ -294,7 +338,10 @@ app.post('/api/store-session', async (req, res) => {
   
   console.log('📥 === STORING NEW SESSION ===');
   console.log('Session ID:', session_id);
+  console.log('Short URL:', short_url ? short_url.substring(0, 50) + '...' : 'NONE');
+  console.log('User ID:', user_id);
   console.log('Database status:', db ? 'connected' : 'disconnected');
+  console.log('Timestamp:', new Date().toISOString());
   
   if (!session_id || !short_url) {
     console.log('❌ Missing required fields');
@@ -307,13 +354,17 @@ app.post('/api/store-session', async (req, res) => {
   const sessionData = {
     short_url: short_url,
     created_at: new Date(),
-    used: false
+    used: false,
+    user_id: user_id || null  // Store user ID for debugging
   };
   
   const stored = await storeSession(session_id, sessionData);
   
   if (stored) {
     console.log('✅ Session stored successfully:', session_id);
+    // Verify storage worked
+    const verifySession = await getSession(session_id);
+    console.log('🔍 Verification - Session found after storage:', !!verifySession);
     res.json({ success: true, message: 'Session stored successfully' });
   } else {
     console.log('❌ Failed to store session');
@@ -327,27 +378,52 @@ app.get('/api/process-session/:sessionId', async (req, res) => {
   console.log('🔄 === PROCESSING SESSION REQUEST ===');
   console.log('Session ID:', sessionId);
   console.log('Database status:', db ? 'connected' : 'disconnected');
+  console.log('User Agent:', req.get('User-Agent')?.substring(0, 100));
+  console.log('IP:', req.headers['x-forwarded-for'] || req.connection.remoteAddress);
+  console.log('Timestamp:', new Date().toISOString());
   
   try {
+    // Log current session count for debugging
+    if (sessionsCollection) {
+      const sessionCount = await sessionsCollection.countDocuments();
+      console.log('📊 Current session count:', sessionCount);
+    }
+    
     const sessionData = await getSession(sessionId);
     console.log('🔍 Session found:', !!sessionData);
     
-    if (!sessionData) {
-      console.log('❌ Session not found:', sessionId);
-      return res.json({
-        success: false,
-        message: 'Session not found or expired. Please request a new link from the bot.'
+    if (sessionData) {
+      console.log('🔍 Session details:', {
+        short_url: sessionData.short_url ? sessionData.short_url.substring(0, 50) + '...' : 'NONE',
+        used: sessionData.used,
+        user_id: sessionData.user_id,
+        created_at: sessionData.created_at,
+        age_seconds: Math.floor((Date.now() - new Date(sessionData.created_at).getTime()) / 1000)
       });
     }
     
-    const sessionAgeMinutes = Math.floor((Date.now() - new Date(sessionData.created_at).getTime()) / 60000);
-    console.log('🕒 Session age:', sessionAgeMinutes, 'minutes');
-    
-    if (sessionAgeMinutes > 30) {
-      console.log('⏰ Session expired');
+    if (!sessionData) {
+      console.log('❌ Session not found:', sessionId);
+      // Additional debugging - check if it might be a case sensitivity issue
+      if (sessionsCollection) {
+        const allSessions = await sessionsCollection.find({}, { session_id: 1 }).limit(20).toArray();
+        console.log('🔎 Available session IDs (first 20):', allSessions.map(s => s.session_id).slice(0, 10));
+      }
       return res.json({
         success: false,
-        message: 'Session expired. Please request a new link from the bot.'
+        message: 'Session not found. Please request a new link from the bot. (This might be due to a system restart)'
+      });
+    }
+    
+    // More generous timing - 10 minutes instead of 5
+    const sessionAgeSeconds = Math.floor((Date.now() - new Date(sessionData.created_at).getTime()) / 1000);
+    console.log('🕒 Session age:', sessionAgeSeconds, 'seconds');
+    
+    if (sessionAgeSeconds > 600) { // 10 minutes
+      console.log('⏰ Session expired (age:', sessionAgeSeconds, 'seconds)');
+      return res.json({
+        success: false,
+        message: 'Session expired (over 10 minutes old). Please request a new link from the bot.'
       });
     }
     
@@ -363,6 +439,8 @@ app.get('/api/process-session/:sessionId', async (req, res) => {
     
     if (usedSession) {
       console.log('✅ Session processed successfully');
+      console.log('➡️ Redirecting to:', sessionData.short_url.substring(0, 50) + '...');
+      
       res.json({
         success: true,
         redirect_url: sessionData.short_url,
@@ -372,14 +450,14 @@ app.get('/api/process-session/:sessionId', async (req, res) => {
       console.log('❌ Failed to mark session as used');
       res.json({
         success: false,
-        message: 'Session processing failed. Please try again.'
+        message: 'Session processing failed. Please try clicking the link again in a few seconds.'
       });
     }
   } catch (error) {
     console.error('💥 Session processing error:', error.message);
     res.json({
       success: false,
-      message: 'Session processing failed. Please try again.'
+      message: 'Session processing failed. Please try again. Error: ' + error.message
     });
   }
 });
@@ -388,6 +466,7 @@ app.get('/api/process-session/:sessionId', async (req, res) => {
 app.get('/access/:sessionId', (req, res) => {
   const sessionId = req.params.sessionId;
   console.log('🌐 Access page requested:', sessionId);
+  console.log('User Agent:', req.get('User-Agent')?.substring(0, 100));
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
