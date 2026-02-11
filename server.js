@@ -26,9 +26,10 @@ async function initDatabase() {
     db = client.db('redirect_service');
     sessionsCollection = db.collection('sessions');
     
-    // Create indexes for better performance
+    // Create indexes for better performance and automatic cleanup
     await sessionsCollection.createIndex({ "session_id": 1 }, { unique: true });
-    await sessionsCollection.createIndex({ "created_at": 1 }, { expireAfterSeconds: 3600 });
+    await sessionsCollection.createIndex({ "created_at": 1 }, { expireAfterSeconds: 1800 }); // 30 minutes TTL
+    await sessionsCollection.createIndex({ "used_at": 1 }, { expireAfterSeconds: 300 }); // 5 minutes for used sessions
     
     console.log('MongoDB connected successfully');
   } catch (error) {
@@ -37,28 +38,80 @@ async function initDatabase() {
     sessionsCollection = null;
   }
 }
+
 // Initialize database on startup
 initDatabase();
 
+// Manual cleanup function for old sessions
+async function cleanupOldSessions() {
+  if (sessionsCollection) {
+    try {
+      // Delete sessions older than 30 minutes
+      const cutoffDate = new Date(Date.now() - 30 * 60 * 1000);
+      const result1 = await sessionsCollection.deleteMany({
+        created_at: { $lt: cutoffDate }
+      });
+      
+      // Delete used sessions older than 5 minutes
+      const usedCutoff = new Date(Date.now() - 5 * 60 * 1000);
+      const result2 = await sessionsCollection.deleteMany({
+        used: true,
+        used_at: { $lt: usedCutoff }
+      });
+      
+      // Limit total sessions to prevent database overload
+      const totalSessions = await sessionsCollection.countDocuments();
+      let result3 = { deletedCount: 0 };
+      if (totalSessions > 5000) { // Limit to 5000 sessions
+        const excessCount = totalSessions - 5000;
+        // Delete oldest sessions if we exceed limit
+        const oldestSessions = await sessionsCollection.find({}).sort({ created_at: 1 }).limit(excessCount).toArray();
+        if (oldestSessions.length > 0) {
+          const sessionIds = oldestSessions.map(s => s.session_id);
+          result3 = await sessionsCollection.deleteMany({
+            session_id: { $in: sessionIds }
+          });
+        }
+      }
+      
+      console.log(`Cleaned up ${result1.deletedCount} old sessions, ${result2.deletedCount} used sessions, ${result3.deletedCount} excess sessions`);
+      return result1.deletedCount + result2.deletedCount + result3.deletedCount;
+    } catch (error) {
+      console.error('Cleanup error:', error);
+      return 0;
+    }
+  }
+  return 0;
+}
+
+// Run cleanup every 5 minutes
+setInterval(cleanupOldSessions, 5 * 60 * 1000);
+
 // Middleware
 app.use(express.static(path.join(__dirname, 'public')));
-app.use(express.json({ limit: '5mb' }));
-app.use(express.urlencoded({ extended: true, limit: '5mb' }));
+app.use(express.json({ limit: '2mb' })); // Reduced limit
+app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
 console.log('Static files middleware loaded');
 
-// Session storage functions with MongoDB fallback
+// Session storage functions with MongoDB
 async function storeSession(sessionId, sessionData) {
   if (sessionsCollection) {
     try {
+      // Check session count and cleanup if needed
+      const sessionCount = await sessionsCollection.countDocuments();
+      if (sessionCount > 4000) { // Early warning at 4000 sessions
+        console.log('Session count high, triggering cleanup');
+        await cleanupOldSessions();
+      }
+      
       await sessionsCollection.updateOne(
         { session_id: sessionId },
         { 
           $set: {
             session_id: sessionId,
             ...sessionData,
-            created_at: new Date(),
-            updated_at: new Date()
+            created_at: new Date()
           }
         },
         { upsert: true }
@@ -150,11 +203,12 @@ app.post('/api/store-session', async (req, res) => {
     });
   }
   
+  // Optimized session data - minimal storage
   const sessionData = {
     short_url: short_url,
-    user_id: user_id || null,
     created_at: new Date(),
     used: false
+    // Removed user_id to save space if not needed for security
   };
   
   const stored = await storeSession(session_id, sessionData);
@@ -186,11 +240,7 @@ app.get('/api/process-session/:sessionId', async (req, res) => {
       });
     }
     
-    console.log('Session details:', {
-      short_url: sessionData.short_url ? sessionData.short_url.substring(0, 50) + '...' : 'NONE',
-      used: sessionData.used,
-      created_at: sessionData.created_at
-    });
+    console.log('Session age (minutes):', Math.floor((Date.now() - new Date(sessionData.created_at).getTime()) / 60000));
     
     if (sessionData.used) {
       console.log('❌ Session already used:', sessionId);
@@ -245,10 +295,12 @@ app.get('/', (req, res) => {
 // Health check
 app.get('/health', async (req, res) => {
   let dbStatus = 'unknown';
+  let sessionCount = 0;
   if (sessionsCollection) {
     try {
       await sessionsCollection.findOne({});
       dbStatus = 'connected';
+      sessionCount = await sessionsCollection.countDocuments();
     } catch (error) {
       dbStatus = 'disconnected';
     }
@@ -258,7 +310,41 @@ app.get('/health', async (req, res) => {
     status: 'OK', 
     timestamp: new Date().toISOString(),
     db: dbStatus,
+    sessions: sessionCount,
     uptime: process.uptime()
+  });
+});
+
+// Admin endpoint to check database stats
+app.get('/admin/stats', async (req, res) => {
+  if (sessionsCollection) {
+    try {
+      const totalSessions = await sessionsCollection.countDocuments();
+      const usedSessions = await sessionsCollection.countDocuments({ used: true });
+      const unusedSessions = await sessionsCollection.countDocuments({ used: false });
+      
+      res.json({
+        sessions: {
+          total: totalSessions,
+          used: usedSessions,
+          unused: unusedSessions
+        },
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  } else {
+    res.json({ error: 'Database not connected' });
+  }
+});
+
+// Manual cleanup endpoint
+app.post('/admin/cleanup', async (req, res) => {
+  const deleted = await cleanupOldSessions();
+  res.json({ 
+    message: `Cleaned up ${deleted} sessions`,
+    timestamp: new Date().toISOString()
   });
 });
 
