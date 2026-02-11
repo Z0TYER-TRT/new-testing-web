@@ -1,35 +1,55 @@
 // Anti-copy protection
 console.log('=== SCRIPT LOADING ===');
+
 document.addEventListener('contextmenu', event => {
-    console.log('Context menu blocked');
     event.preventDefault();
 });
 
 document.addEventListener('keydown', function(e) {
     // Prevent common copy shortcuts
-    if (e.ctrlKey && (e.key === 'c' || e.key === 'C' || e.key === 'a' || e.key === 'A' || e.key === 'u' || e.key === 'U')) {
-        console.log('Keyboard shortcut blocked:', e.key);
+    if (e.ctrlKey && ['c', 'C', 'a', 'A', 'u', 'U'].includes(e.key)) {
         e.preventDefault();
     }
 });
 
 document.addEventListener('selectstart', e => {
-    console.log('Text selection blocked');
     e.preventDefault();
 });
 
-// Get session ID from URL path
+// Get DOM elements
 const pathParts = window.location.pathname.split('/');
 const sessionId = pathParts[pathParts.length - 1];
-console.log('Session ID from URL:', sessionId);
 
-// Get DOM elements
+const loader = document.getElementById('loader');
+const checkMark = document.getElementById('checkMark');
+const crossMark = document.getElementById('crossMark');
+const title = document.getElementById('title');
+const message = document.getElementById('message');
 const countdownElement = document.getElementById('countdown');
 const progressBar = document.getElementById('progress');
 const manualRedirectBtn = document.getElementById('manualRedirect');
 const statusMessage = document.getElementById('status-message');
 
 let countdown = 3;
+
+// Function to show different icons
+function showLoader() {
+    loader.style.display = 'block';
+    checkMark.style.display = 'none';
+    crossMark.style.display = 'none';
+}
+
+function showCheckMark() {
+    loader.style.display = 'none';
+    checkMark.style.display = 'block';
+    crossMark.style.display = 'none';
+}
+
+function showCrossMark() {
+    loader.style.display = 'none';
+    checkMark.style.display = 'none';
+    crossMark.style.display = 'block';
+}
 
 // Function to redirect via server-side verification
 async function redirectToDestination() {
@@ -38,10 +58,11 @@ async function redirectToDestination() {
     
     if (sessionId && sessionId !== 'access') {
         try {
+            // Update UI for processing
+            showLoader();
             if (statusMessage) {
                 statusMessage.innerHTML = 'Verifying your access...';
             }
-            console.log('Calling API: /api/process-session/' + sessionId);
             
             // Show loading state
             document.body.style.cursor = 'wait';
@@ -66,13 +87,22 @@ async function redirectToDestination() {
             if (data.success && data.redirect_url) {
                 console.log('✅ SUCCESS: Redirecting to', data.redirect_url);
                 
-                // Update UI
+                // Show success state
+                showCheckMark();
                 if (progressBar) {
                     progressBar.style.width = '100%';
                 }
                 
                 if (statusMessage) {
                     statusMessage.innerHTML = '<span class="success">Verified! Redirecting...</span>';
+                }
+                
+                if (title) {
+                    title.textContent = '✅ Access Granted';
+                }
+                
+                if (message) {
+                    message.textContent = 'You will be redirected shortly...';
                 }
                 
                 // Reset cursor
@@ -82,7 +112,7 @@ async function redirectToDestination() {
                 setTimeout(() => {
                     console.log('WINDOW LOCATION CHANGE:', data.redirect_url);
                     window.location.href = data.redirect_url;
-                }, 1000);
+                }, 1500);
             } else {
                 console.log('❌ API ERROR:', data.message);
                 // Reset cursor
@@ -101,16 +131,20 @@ async function redirectToDestination() {
     }
 }
 
-function showError(message) {
-    console.log('SHOWING ERROR:', message);
-    const heading = document.querySelector('h2');
-    if (heading) {
-        heading.textContent = 'Access Denied';
+function showError(errorMessage) {
+    console.log('SHOWING ERROR:', errorMessage);
+    
+    // Show error state
+    showCrossMark();
+    
+    if (title) {
+        title.textContent = '❌ Access Denied';
+        title.style.color = '#e74c3c';
     }
     
-    const messageElement = document.querySelectorAll('p')[1]; // Second paragraph
-    if (messageElement) {
-        messageElement.innerHTML = `${message}<br>Please contact support.`;
+    if (message) {
+        message.innerHTML = `${errorMessage}<br>Please contact support.`;
+        message.style.color = '#e74c3c';
     }
     
     const countdownDisplay = document.querySelector('.countdown');
@@ -129,6 +163,10 @@ function showError(message) {
             alert('Please go back to the Telegram bot and request a new link.');
         };
     }
+    
+    if (statusMessage) {
+        statusMessage.innerHTML = '<span class="error">Error occurred</span>';
+    }
 }
 
 // Manual redirect button event listener
@@ -142,6 +180,11 @@ if (sessionId && sessionId !== 'access') {
     
     if (progressBar) {
         progressBar.style.width = '100%';
+        // Animate progress bar
+        setTimeout(() => {
+            progressBar.style.transition = 'width 3s ease';
+            progressBar.style.width = '0%';
+        }, 100);
     }
     
     const countdownInterval = setInterval(() => {
@@ -178,6 +221,9 @@ if (sessionId && sessionId !== 'access') {
 document.addEventListener('DOMContentLoaded', function() {
     console.log('DOM fully loaded and parsed');
     document.body.style.backgroundColor = '#667eea';
+    
+    // Initialize with loader visible
+    showLoader();
 });
 
 // Window load event
