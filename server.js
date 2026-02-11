@@ -389,7 +389,7 @@ app.get('/api/process-session/:sessionId', async (req, res) => {
       console.log('📊 Current session count:', sessionCount);
     }
     
-    const sessionData = await getSession(sessionId);
+    let sessionData = await getSession(sessionId);
     console.log('🔍 Session found in primary storage:', !!sessionData);
     
     if (sessionData) {
