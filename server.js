@@ -19,7 +19,7 @@ async function initDatabase() {
       useNewUrlParser: true,
       useUnifiedTopology: true,
       maxPoolSize: 5,
-      serverSelectionTimeoutMS: 5000,
+      serverSelectionTimeoutMS: 10000, // Increased timeout
     });
     
     await client.connect();
@@ -31,9 +31,9 @@ async function initDatabase() {
     await sessionsCollection.createIndex({ "created_at": 1 }, { expireAfterSeconds: 1800 }); // 30 minutes TTL
     await sessionsCollection.createIndex({ "used_at": 1 }, { expireAfterSeconds: 300 }); // 5 minutes for used sessions
     
-    console.log('MongoDB connected successfully');
+    console.log('✅ MongoDB connected successfully');
   } catch (error) {
-    console.error('MongoDB connection failed:', error);
+    console.error('❌ MongoDB connection failed:', error);
     db = null;
     sessionsCollection = null;
   }
@@ -74,10 +74,10 @@ async function cleanupOldSessions() {
         }
       }
       
-      console.log(`Cleaned up ${result1.deletedCount} old sessions, ${result2.deletedCount} used sessions, ${result3.deletedCount} excess sessions`);
+      console.log(`🧹 Cleaned up ${result1.deletedCount} old sessions, ${result2.deletedCount} used sessions, ${result3.deletedCount} excess sessions`);
       return result1.deletedCount + result2.deletedCount + result3.deletedCount;
     } catch (error) {
-      console.error('Cleanup error:', error);
+      console.error('❌ Cleanup error:', error);
       return 0;
     }
   }
@@ -89,10 +89,10 @@ setInterval(cleanupOldSessions, 5 * 60 * 1000);
 
 // Middleware
 app.use(express.static(path.join(__dirname, 'public')));
-app.use(express.json({ limit: '2mb' })); // Reduced limit
+app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
-console.log('Static files middleware loaded');
+console.log('📦 Static files middleware loaded');
 
 // Session storage functions with MongoDB
 async function storeSession(sessionId, sessionData) {
@@ -100,12 +100,12 @@ async function storeSession(sessionId, sessionData) {
     try {
       // Check session count and cleanup if needed
       const sessionCount = await sessionsCollection.countDocuments();
-      if (sessionCount > 4000) { // Early warning at 4000 sessions
-        console.log('Session count high, triggering cleanup');
+      if (sessionCount > 4000) {
+        console.log('⚠️ Session count high, triggering cleanup');
         await cleanupOldSessions();
       }
       
-      await sessionsCollection.updateOne(
+      const result = await sessionsCollection.updateOne(
         { session_id: sessionId },
         { 
           $set: {
@@ -116,13 +116,15 @@ async function storeSession(sessionId, sessionData) {
         },
         { upsert: true }
       );
-      console.log('✅ Session stored in MongoDB:', sessionId);
+      
+      console.log(`💾 Session stored - Modified: ${result.modifiedCount}, Upserted: ${result.upsertedCount}`);
       return true;
     } catch (error) {
       console.error('❌ MongoDB store error:', error);
       return false;
     }
   }
+  console.log('❌ No database connection for storing session');
   return false;
 }
 
@@ -136,6 +138,7 @@ async function getSession(sessionId) {
       return null;
     }
   }
+  console.log('❌ No database connection for getting session');
   return null;
 }
 
@@ -153,12 +156,13 @@ async function useSession(sessionId) {
       return null;
     }
   }
+  console.log('❌ No database connection for using session');
   return null;
 }
 
 // Rate limiting (simple in-memory for Vercel free tier)
 const requestCounts = new Map();
-const RATE_LIMIT = 50; // 50 requests per minute per IP
+const RATE_LIMIT = 100; // Increased limit
 const TIME_WINDOW = 60000; // 1 minute
 
 function checkRateLimit(ip) {
@@ -180,6 +184,7 @@ function checkRateLimit(ip) {
 app.use((req, res, next) => {
   const ip = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
   if (!checkRateLimit(ip)) {
+    console.log('🚨 Rate limit exceeded for IP:', ip);
     return res.status(429).json({ 
       success: false, 
       message: 'Rate limit exceeded. Please try again later.' 
@@ -188,12 +193,64 @@ app.use((req, res, next) => {
   next();
 });
 
+// DEBUG ENDPOINT - Remove in production!
+app.get('/debug/session/:sessionId', async (req, res) => {
+  const sessionId = req.params.sessionId;
+  console.log('🔍 Debug session request:', sessionId);
+  
+  if (!sessionsCollection) {
+    return res.json({ error: 'No database connection' });
+  }
+  
+  try {
+    const session = await sessionsCollection.findOne({ session_id: sessionId });
+    res.json({
+      session: session,
+      found: !!session,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.json({ error: error.message });
+  }
+});
+
+// DEBUG ENDPOINT - Remove in production!
+app.get('/debug/sessions', async (req, res) => {
+  if (!sessionsCollection) {
+    return res.json({ error: 'No database connection' });
+  }
+  
+  try {
+    const sessions = await sessionsCollection
+      .find({})
+      .sort({ created_at: -1 })
+      .limit(20)
+      .toArray();
+    
+    res.json({
+      sessions: sessions.map(s => ({
+        session_id: s.session_id,
+        used: s.used,
+        created_at: s.created_at,
+        age_minutes: Math.floor((Date.now() - new Date(s.created_at).getTime()) / 60000)
+      })),
+      count: sessions.length,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.json({ error: error.message });
+  }
+});
+
 // API endpoint - RECEIVE session data from bot
 app.post('/api/store-session', async (req, res) => {
   const { session_id, short_url, user_id } = req.body;
   
-  console.log('=== STORING NEW SESSION ===');
+  console.log('📥 === STORING NEW SESSION ===');
   console.log('Session ID:', session_id);
+  console.log('Short URL:', short_url ? short_url.substring(0, 50) + '...' : 'NONE');
+  console.log('User ID:', user_id);
+  console.log('Timestamp:', new Date().toISOString());
   
   if (!session_id || !short_url) {
     console.log('❌ Missing required fields');
@@ -203,18 +260,28 @@ app.post('/api/store-session', async (req, res) => {
     });
   }
   
+  if (!sessionsCollection) {
+    console.log('❌ No database connection');
+    return res.status(500).json({ 
+      success: false, 
+      message: 'Database not connected' 
+    });
+  }
+  
   // Optimized session data - minimal storage
   const sessionData = {
     short_url: short_url,
     created_at: new Date(),
     used: false
-    // Removed user_id to save space if not needed for security
   };
   
   const stored = await storeSession(session_id, sessionData);
   
   if (stored) {
     console.log('✅ Session stored successfully in MongoDB:', session_id);
+    // Verify storage
+    const verifySession = await getSession(session_id);
+    console.log('🔍 Verification - Session found:', !!verifySession);
     res.json({ success: true, message: 'Session stored successfully' });
   } else {
     console.log('❌ Failed to store session in MongoDB');
@@ -225,25 +292,55 @@ app.post('/api/store-session', async (req, res) => {
 // API endpoint - PROCESS session for redirect
 app.get('/api/process-session/:sessionId', async (req, res) => {
   const sessionId = req.params.sessionId;
-  console.log('=== PROCESSING SESSION REQUEST ===');
+  console.log('🔄 === PROCESSING SESSION REQUEST ===');
   console.log('Requested Session ID:', sessionId);
+  console.log('Timestamp:', new Date().toISOString());
+  
+  if (!sessionsCollection) {
+    console.log('❌ No database connection');
+    return res.json({
+      success: false,
+      message: 'Database not connected. Please try again.'
+    });
+  }
   
   try {
+    // Log database status
+    const totalSessions = await sessionsCollection.countDocuments();
+    console.log('📊 Total sessions in database:', totalSessions);
+    
     const sessionData = await getSession(sessionId);
-    console.log('Session data found:', sessionData ? 'YES' : 'NO');
+    console.log('🔍 Session data found:', sessionData ? 'YES' : 'NO');
     
     if (!sessionData) {
       console.log('❌ Session not found:', sessionId);
+      // Additional debugging - check similar session IDs
+      const regexPattern = sessionId.replace(/[^a-zA-Z0-9]/g, '');
+      console.log('🔎 Searching with regex pattern:', regexPattern.substring(0, 10) + '...');
+      
       return res.json({
         success: false,
         message: 'Session not found or expired. Please request a new link from the bot.'
       });
     }
     
-    console.log('Session age (minutes):', Math.floor((Date.now() - new Date(sessionData.created_at).getTime()) / 60000));
+    // Log session details
+    const sessionAgeMinutes = Math.floor((Date.now() - new Date(sessionData.created_at).getTime()) / 60000);
+    console.log('🕒 Session age (minutes):', sessionAgeMinutes);
+    console.log('🔗 Short URL preview:', sessionData.short_url.substring(0, 50) + '...');
+    console.log('✅ Used status:', sessionData.used);
+    
+    // Check if session is too old (more than 30 minutes)
+    if (sessionAgeMinutes > 30) {
+      console.log('⏰ Session expired (age:', sessionAgeMinutes, 'minutes)');
+      return res.json({
+        success: false,
+        message: 'Session expired. Please request a new link from the bot.'
+      });
+    }
     
     if (sessionData.used) {
-      console.log('❌ Session already used:', sessionId);
+      console.log('🚫 Session already used:', sessionId);
       return res.json({
         success: false,
         message: 'This link has already been used. Please request a new one from the bot.'
@@ -255,7 +352,7 @@ app.get('/api/process-session/:sessionId', async (req, res) => {
     
     if (usedSession) {
       console.log('✅ Session processed successfully:', sessionId);
-      console.log('✅ Redirecting to:', sessionData.short_url.substring(0, 50) + '...');
+      console.log('➡️ Redirecting to:', sessionData.short_url.substring(0, 50) + '...');
       
       res.json({
         success: true,
@@ -270,7 +367,7 @@ app.get('/api/process-session/:sessionId', async (req, res) => {
       });
     }
   } catch (error) {
-    console.error('❌ Session processing error:', error);
+    console.error('💥 Session processing error:', error);
     res.json({
       success: false,
       message: 'Session processing failed. Please try again.'
@@ -281,14 +378,15 @@ app.get('/api/process-session/:sessionId', async (req, res) => {
 // Access route for session pages
 app.get('/access/:sessionId', (req, res) => {
   const sessionId = req.params.sessionId;
-  console.log('=== ACCESS PAGE REQUESTED ===');
+  console.log('🌐 === ACCESS PAGE REQUESTED ===');
   console.log('Session ID:', sessionId);
+  console.log('User Agent:', req.get('User-Agent')?.substring(0, 50) + '...');
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // Root route
 app.get('/', (req, res) => {
-  console.log('Root page requested');
+  console.log('🏠 Root page requested');
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
@@ -322,12 +420,17 @@ app.get('/admin/stats', async (req, res) => {
       const totalSessions = await sessionsCollection.countDocuments();
       const usedSessions = await sessionsCollection.countDocuments({ used: true });
       const unusedSessions = await sessionsCollection.countDocuments({ used: false });
+      const recentCutoff = new Date(Date.now() - 5 * 60 * 1000); // Last 5 minutes
+      const recentSessions = await sessionsCollection.countDocuments({
+        created_at: { $gte: recentCutoff }
+      });
       
       res.json({
         sessions: {
           total: totalSessions,
           used: usedSessions,
-          unused: unusedSessions
+          unused: unusedSessions,
+          recent: recentSessions
         },
         timestamp: new Date().toISOString()
       });
@@ -356,7 +459,7 @@ app.use((req, res) => {
 
 // Error handling
 app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err);
+  console.error('💥 Unhandled error:', err);
   res.status(500).json({ 
     success: false, 
     message: 'Internal server error' 
@@ -370,6 +473,6 @@ module.exports = app;
 if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`Health check: http://localhost:${PORT}/health`);
+    console.log(`🏥 Health check: http://localhost:${PORT}/health`);
   });
 }
