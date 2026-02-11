@@ -10,9 +10,13 @@
 <body>
     <div class="container">
         <div class="content">
-            <div class="loader"></div>
-            <h2>🔗 Processing Your Request</h2>
-            <p>Verifying your access and preparing your link...</p>
+            <div class="icon-container">
+                <div class="loader" id="loader"></div>
+                <div class="check-mark" id="checkMark">✓</div>
+                <div class="cross-mark" id="crossMark">✗</div>
+            </div>
+            <h2 id="title">🔗 Processing Your Request</h2>
+            <p id="message">Verifying your access and preparing your link...</p>
             <div class="progress-bar">
                 <div class="progress" id="progress"></div>
             </div>
