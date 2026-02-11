@@ -1,198 +1,289 @@
 const express = require('express');
 const path = require('path');
+const { MongoClient } = require('mongodb');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-console.log('Server starting...');
+// MongoDB connection
+let db;
+let sessionsCollection;
 
-// Serve static files with explicit routes for CSS and JS
-app.get('/style.css', (req, res) => {
-    console.log('Serving style.css');
-    res.sendFile(path.join(__dirname, 'public', 'style.css'));
-});
+// Initialize MongoDB connection
+async function initDatabase() {
+  try {
+    const mongoUri = process.env.MONGODB_URI || 'mongodb+srv://redirect-kawaii:6pYMr5v6WznRduAL@cluster0.cqnnbgi.mongodb.net/?appName=Cluster0';
+    const client = new MongoClient(mongoUri, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+      maxPoolSize: 5, // Limit connections for free tier
+      serverSelectionTimeoutMS: 5000,
+    });
+    
+    await client.connect();
+    db = client.db('redirect_service'); // Change to your DB name
+    sessionsCollection = db.collection('sessions');
+    
+    // Create indexes for better performance
+    await sessionsCollection.createIndex({ "session_id": 1 }, { unique: true });
+    await sessionsCollection.createIndex({ "created_at": 1 }, { expireAfterSeconds: 3600 }); // 1 hour auto-expiry
+    
+    console.log('MongoDB connected successfully');
+  } catch (error) {
+    console.error('MongoDB connection failed:', error);
+    // Continue without database - fallback to in-memory
+    db = null;
+    sessionsCollection = null;
+  }
+}
 
-app.get('/script.js', (req, res) => {
-    console.log('Serving script.js');
-    res.sendFile(path.join(__dirname, 'public', 'script.js'));
-});
+// Initialize database on startup
+initDatabase();
 
-// Serve other static assets (images, fonts, etc.)
+// Middleware
 app.use(express.static(path.join(__dirname, 'public')));
-
-// Parse JSON bodies
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '5mb' }));
+app.use(express.urlencoded({ extended: true, limit: '5mb' }));
 
 console.log('Static files middleware loaded');
 
-// In-memory storage for sessions with cleanup
-const activeSessions = new Map();
+// Session storage functions with MongoDB fallback
+async function storeSession(sessionId, sessionData) {
+  if (sessionsCollection) {
+    try {
+      await sessionsCollection.updateOne(
+        { session_id: sessionId },
+        { 
+          $set: {
+            session_id: sessionId,
+            ...sessionData,
+            created_at: new Date(),
+            updated_at: new Date()
+          }
+        },
+        { upsert: true }
+      );
+      console.log('✅ Session stored in MongoDB:', sessionId);
+      return true;
+    } catch (error) {
+      console.error('❌ MongoDB store error:', error);
+      return false;
+    }
+  }
+  return false;
+}
 
-// Cleanup old sessions every 5 minutes
-setInterval(() => {
-    const now = Date.now();
-    const expiredSessions = [];
-    
-    activeSessions.forEach((session, sessionId) => {
-        // Remove sessions older than 1 hour
-        if (now - new Date(session.created_at).getTime() > 3600000) {
-            expiredSessions.push(sessionId);
-        }
+async function getSession(sessionId) {
+  if (sessionsCollection) {
+    try {
+      const session = await sessionsCollection.findOne({ session_id: sessionId });
+      return session;
+    } catch (error) {
+      console.error('❌ MongoDB get error:', error);
+      return null;
+    }
+  }
+  return null;
+}
+
+async function useSession(sessionId) {
+  if (sessionsCollection) {
+    try {
+      const result = await sessionsCollection.findOneAndUpdate(
+        { session_id: sessionId, used: false },
+        { $set: { used: true, used_at: new Date() } },
+        { returnDocument: 'after' }
+      );
+      return result.value;
+    } catch (error) {
+      console.error('❌ MongoDB use error:', error);
+      return null;
+    }
+  }
+  return null;
+}
+
+// Rate limiting (simple in-memory for Vercel free tier)
+const requestCounts = new Map();
+const RATE_LIMIT = 50; // 50 requests per minute per IP
+const TIME_WINDOW = 60000; // 1 minute
+
+function checkRateLimit(ip) {
+  const now = Date.now();
+  const requestData = requestCounts.get(ip) || { count: 0, resetTime: 0 };
+  
+  if (now > requestData.resetTime) {
+    requestData.count = 0;
+    requestData.resetTime = now + TIME_WINDOW;
+  }
+  
+  requestData.count++;
+  requestCounts.set(ip, requestData);
+  
+  return requestData.count <= RATE_LIMIT;
+}
+
+// Middleware for rate limiting
+app.use((req, res, next) => {
+  const ip = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
+  if (!checkRateLimit(ip)) {
+    return res.status(429).json({ 
+      success: false, 
+      message: 'Rate limit exceeded. Please try again later.' 
     });
-    
-    expiredSessions.forEach(sessionId => {
-        activeSessions.delete(sessionId);
-        console.log('Cleaned up expired session:', sessionId);
-    });
-    
-    console.log(`Cleaned up ${expiredSessions.length} expired sessions`);
-}, 300000); // 5 minutes
+  }
+  next();
+});
 
 // API endpoint - RECEIVE session data from bot
-app.post('/api/store-session', (req, res) => {
-    const { session_id, short_url, user_id } = req.body;
-    
-    console.log('=== STORING NEW SESSION ===');
-    console.log('Session ID:', session_id);
-    console.log('Short URL:', short_url);
-    console.log('User ID:', user_id);
-    
-    if (!session_id || !short_url) {
-        console.log('❌ Missing required fields');
-        return res.status(400).json({ 
-            success: false, 
-            message: 'Missing required fields: session_id and short_url' 
-        });
-    }
-    
-    // Store session data in memory
-    activeSessions.set(session_id, {
-        short_url: short_url,
-        user_id: user_id || null,
-        created_at: new Date(),
-        used: false
+app.post('/api/store-session', async (req, res) => {
+  const { session_id, short_url, user_id } = req.body;
+  
+  console.log('=== STORING NEW SESSION ===');
+  console.log('Session ID:', session_id);
+  
+  if (!session_id || !short_url) {
+    console.log('❌ Missing required fields');
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Missing required fields: session_id and short_url' 
     });
-    
-    console.log('✅ Session stored successfully:', session_id);
-    console.log('Total active sessions:', activeSessions.size);
+  }
+  
+  const sessionData = {
+    short_url: short_url,
+    user_id: user_id || null,
+    created_at: new Date(),
+    used: false
+  };
+  
+  const stored = await storeSession(session_id, sessionData);
+  
+  if (stored) {
+    console.log('✅ Session stored successfully in MongoDB:', session_id);
     res.json({ success: true, message: 'Session stored successfully' });
+  } else {
+    console.log('❌ Failed to store session in MongoDB');
+    res.status(500).json({ success: false, message: 'Failed to store session' });
+  }
 });
 
 // API endpoint - PROCESS session for redirect
-app.get('/api/process-session/:sessionId', (req, res) => {
-    const sessionId = req.params.sessionId;
-    console.log('=== PROCESSING SESSION REQUEST ===');
-    console.log('Requested Session ID:', sessionId);
-    console.log('Active sessions count:', activeSessions.size);
+app.get('/api/process-session/:sessionId', async (req, res) => {
+  const sessionId = req.params.sessionId;
+  console.log('=== PROCESSING SESSION REQUEST ===');
+  console.log('Requested Session ID:', sessionId);
+  
+  try {
+    const sessionData = await getSession(sessionId);
+    console.log('Session data found:', sessionData ? 'YES' : 'NO');
     
-    try {
-        // List all available session IDs for debugging
-        console.log('Available session IDs:', Array.from(activeSessions.keys()).slice(0, 10)); // Show first 10
-        
-        const sessionData = activeSessions.get(sessionId);
-        console.log('Session data found:', sessionData ? 'YES' : 'NO');
-        
-        if (!sessionData) {
-            console.log('❌ Session not found:', sessionId);
-            return res.json({
-                success: false,
-                message: 'Session not found or expired. Please request a new link from the bot.'
-            });
-        }
-        
-        console.log('Session details:', {
-            short_url: sessionData.short_url ? sessionData.short_url.substring(0, 50) + '...' : 'NONE',
-            used: sessionData.used,
-            created_at: sessionData.created_at
-        });
-        
-        // Check if session is already used
-        if (sessionData.used) {
-            console.log('❌ Session already used:', sessionId);
-            return res.json({
-                success: false,
-                message: 'This link has already been used. Please request a new one from the bot.'
-            });
-        }
-        
-        // Mark session as used
-        sessionData.used = true;
-        activeSessions.set(sessionId, sessionData);
-        
-        console.log('✅ Session processed successfully:', sessionId);
-        console.log('✅ Redirecting to:', sessionData.short_url.substring(0, 50) + '...');
-        
-        res.json({
-            success: true,
-            redirect_url: sessionData.short_url,
-            message: 'Redirecting to destination...'
-        });
-    } catch (error) {
-        console.error('❌ Session processing error:', error);
-        res.json({
-            success: false,
-            message: 'Session processing failed. Please try again.'
-        });
+    if (!sessionData) {
+      console.log('❌ Session not found:', sessionId);
+      return res.json({
+        success: false,
+        message: 'Session not found or expired. Please request a new link from the bot.'
+      });
     }
+    
+    console.log('Session details:', {
+      short_url: sessionData.short_url ? sessionData.short_url.substring(0, 50) + '...' : 'NONE',
+      used: sessionData.used,
+      created_at: sessionData.created_at
+    });
+    
+    if (sessionData.used) {
+      console.log('❌ Session already used:', sessionId);
+      return res.json({
+        success: false,
+        message: 'This link has already been used. Please request a new one from the bot.'
+      });
+    }
+    
+    // Mark session as used
+    const usedSession = await useSession(sessionId);
+    
+    if (usedSession) {
+      console.log('✅ Session processed successfully:', sessionId);
+      console.log('✅ Redirecting to:', sessionData.short_url.substring(0, 50) + '...');
+      
+      res.json({
+        success: true,
+        redirect_url: sessionData.short_url,
+        message: 'Redirecting to destination...'
+      });
+    } else {
+      console.log('❌ Failed to mark session as used:', sessionId);
+      res.json({
+        success: false,
+        message: 'Session processing failed. Please try again.'
+      });
+    }
+  } catch (error) {
+    console.error('❌ Session processing error:', error);
+    res.json({
+      success: false,
+      message: 'Session processing failed. Please try again.'
+    });
+  }
 });
 
 // Access route for session pages
 app.get('/access/:sessionId', (req, res) => {
-    const sessionId = req.params.sessionId;
-    console.log('=== ACCESS PAGE REQUESTED ===');
-    console.log('Session ID:', sessionId);
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  const sessionId = req.params.sessionId;
+  console.log('=== ACCESS PAGE REQUESTED ===');
+  console.log('Session ID:', sessionId);
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // Root route
 app.get('/', (req, res) => {
-    console.log('Root page requested');
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  console.log('Root page requested');
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // Health check
-app.get('/health', (req, res) => {
-    res.json({ 
-        status: 'OK', 
-        timestamp: new Date().toISOString(),
-        active_sessions: activeSessions.size,
-        uptime: process.uptime()
-    });
+app.get('/health', async (req, res) => {
+  let dbStatus = 'unknown';
+  if (sessionsCollection) {
+    try {
+      await sessionsCollection.findOne({});
+      dbStatus = 'connected';
+    } catch (error) {
+      dbStatus = 'disconnected';
+    }
+  }
+  
+  res.json({ 
+    status: 'OK', 
+    timestamp: new Date().toISOString(),
+    db: dbStatus,
+    uptime: process.uptime()
+  });
 });
 
-// 404 handler for any other routes
+// 404 handler
 app.use((req, res) => {
-    console.log('404 - Not found:', req.url);
-    res.status(404).sendFile(path.join(__dirname, 'public', 'index.html'));
+  console.log('404 - Not found:', req.url);
+  res.status(404).sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Error handling middleware
+// Error handling
 app.use((err, req, res, next) => {
-    console.error('Unhandled error:', err);
-    res.status(500).json({ 
-        success: false, 
-        message: 'Internal server error' 
-    });
+  console.error('Unhandled error:', err);
+  res.status(500).json({ 
+    success: false, 
+    message: 'Internal server error' 
+  });
 });
 
-// Start server
-const server = app.listen(PORT, () => {
+// Export for Vercel
+module.exports = app;
+
+// Start server if running locally
+if (require.main === module) {
+  app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`Health check: http://localhost:${PORT}/health`);
-});
-
-// Graceful shutdown
-process.on('SIGTERM', () => {
-    console.log('SIGTERM received, shutting down gracefully');
-    server.close(() => {
-        console.log('Process terminated');
-        process.exit(0);
-    });
-});
-
-process.on('SIGINT', () => {
-    console.log('SIGINT received, shutting down gracefully');
-    server.close(() => {
-        console.log('Process terminated');
-        process.exit(0);
-    });
-});
+  });
+}
