@@ -8,8 +8,25 @@
   ],
   "routes": [
     {
+      "src": "/api/store-session",
+      "dest": "/server.js",
+      "methods": ["POST"]
+    },
+    {
+      "src": "/api/process-session/(.*)",
+      "dest": "/server.js?sessionId=$1",
+      "methods": ["GET"]
+    },
+    {
+      "src": "/access/(.*)",
+      "dest": "/server.js"
+    },
+    {
       "src": "/(.*)",
       "dest": "/server.js"
     }
-  ]
+  ],
+  "env": {
+    "MONGODB_URI": "@mongodb-uri"
+  }
 }
