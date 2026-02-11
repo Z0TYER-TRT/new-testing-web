@@ -1,5 +1,5 @@
 {
-  "name": "redirect-page",
+  "name": "redirect-kawaii",
   "version": "1.0.0",
   "description": "Secure redirect page for Telegram bot",
   "main": "server.js",
