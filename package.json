@@ -1,7 +1,7 @@
 {
   "name": "redirect-kawaii",
   "version": "1.0.0",
-  "description": "Secure redirect page for Telegram bot",
+  "description": "Secure redirect page for Telegram bot.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
