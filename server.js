@@ -12,32 +12,31 @@ let sessionsCollection;
 // Initialize MongoDB connection
 async function initDatabase() {
   try {
-    const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017';
-    const mongoUri = 'mongodb+srv://redirect-kawaii:6pYMr5v6WznRduAL@cluster0.cqnnbgi.mongodb.net/?appName=Cluster0';
+    // Use environment variable in production, fallback for local development
+    const mongoUri = process.env.MONGODB_URI || 'mongodb+srv://redirect-kawaii:6pYMr5v6WznRduAL@cluster0.cqnnbgi.mongodb.net/redirect_service?appName=Cluster0';
+    
     const client = new MongoClient(mongoUri, {
       useNewUrlParser: true,
       useUnifiedTopology: true,
-      maxPoolSize: 5, // Limit connections for free tier
+      maxPoolSize: 5,
       serverSelectionTimeoutMS: 5000,
     });
     
     await client.connect();
-    db = client.db('redirect_service'); // Change to your DB name
+    db = client.db('redirect_service');
     sessionsCollection = db.collection('sessions');
     
     // Create indexes for better performance
     await sessionsCollection.createIndex({ "session_id": 1 }, { unique: true });
-    await sessionsCollection.createIndex({ "created_at": 1 }, { expireAfterSeconds: 3600 }); // 1 hour auto-expiry
+    await sessionsCollection.createIndex({ "created_at": 1 }, { expireAfterSeconds: 3600 });
     
     console.log('MongoDB connected successfully');
   } catch (error) {
     console.error('MongoDB connection failed:', error);
-    // Continue without database - fallback to in-memory
     db = null;
     sessionsCollection = null;
   }
 }
-
 // Initialize database on startup
 initDatabase();
 
