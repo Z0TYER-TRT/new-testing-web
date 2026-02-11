@@ -390,7 +390,7 @@ app.get('/api/process-session/:sessionId', async (req, res) => {
     }
     
     const sessionData = await getSession(sessionId);
-    console.log('🔍 Session found:', !!sessionData);
+    console.log('🔍 Session found in primary storage:', !!sessionData);
     
     if (sessionData) {
       console.log('🔍 Session details:', {
@@ -402,28 +402,66 @@ app.get('/api/process-session/:sessionId', async (req, res) => {
       });
     }
     
+    // If not found in primary storage, check fallback storage
     if (!sessionData) {
-      console.log('❌ Session not found:', sessionId);
-      // Additional debugging - check if it might be a case sensitivity issue
-      if (sessionsCollection) {
-        const allSessions = await sessionsCollection.find({}, { session_id: 1 }).limit(20).toArray();
-        console.log('🔎 Available session IDs (first 20):', allSessions.map(s => s.session_id).slice(0, 10));
+      console.log('🔄 Checking fallback storage mechanisms...');
+      
+      // Check if this might be related to MongoDB connection issues
+      if (!db || !sessionsCollection) {
+        console.log('❌ No database connection - checking in-memory fallback');
+        // Session might be in fallback storage
+        const fallbackSession = fallbackSessions.get(sessionId);
+        if (fallbackSession) {
+          console.log('✅ Found session in fallback storage');
+          sessionData = fallbackSession;
+        }
       }
+      
+      // If still not found, check if it might be a timing issue
+      if (!sessionData) {
+        console.log('⏰ Possible timing issue - session might still be storing');
+        // Wait a bit and try again (common with serverless cold starts)
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        const retrySessionData = await getSession(sessionId);
+        if (retrySessionData) {
+          console.log('✅ Session found on retry');
+          sessionData = retrySessionData;
+        }
+      }
+    }
+    
+    if (!sessionData) {
+      console.log('❌ Session not found after all checks:', sessionId);
+      
+      // Additional debugging - list recent sessions
+      if (sessionsCollection) {
+        try {
+          const recentSessions = await sessionsCollection
+            .find({})
+            .sort({ created_at: -1 })
+            .limit(10)
+            .toArray();
+          console.log('🔎 Recent session IDs:', recentSessions.map(s => s.session_id).slice(0, 5));
+        } catch (error) {
+          console.log('🔎 Could not list recent sessions:', error.message);
+        }
+      }
+      
       return res.json({
         success: false,
-        message: 'Session not found. Please request a new link from the bot. (This might be due to a system restart)'
+        message: 'Session not found. This might be due to timing. Please click the button again - it should work now!'
       });
     }
     
-    // More generous timing - 10 minutes instead of 5
+    // More generous timing - 15 minutes instead of 10
     const sessionAgeSeconds = Math.floor((Date.now() - new Date(sessionData.created_at).getTime()) / 1000);
     console.log('🕒 Session age:', sessionAgeSeconds, 'seconds');
     
-    if (sessionAgeSeconds > 600) { // 10 minutes
+    if (sessionAgeSeconds > 900) { // 15 minutes
       console.log('⏰ Session expired (age:', sessionAgeSeconds, 'seconds)');
       return res.json({
         success: false,
-        message: 'Session expired (over 10 minutes old). Please request a new link from the bot.'
+        message: 'Session expired (over 15 minutes old). Please request a new link from the bot.'
       });
     }
     
