@@ -34,6 +34,13 @@ body {
     box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
     max-width: 500px;
     width: 90%;
+    transition: all 0.3s ease;
+}
+
+.icon-container {
+    position: relative;
+    height: 70px;
+    margin-bottom: 20px;
 }
 
 .loader {
@@ -43,7 +50,24 @@ body {
     border-top: 5px solid #667eea;
     border-radius: 50%;
     animation: spin 1s linear infinite;
-    margin: 0 auto 20px;
+    margin: 0 auto;
+    display: block;
+}
+
+.check-mark {
+    font-size: 50px;
+    color: #27ae60;
+    display: none;
+    margin: 0 auto;
+    animation: popIn 0.3s ease;
+}
+
+.cross-mark {
+    font-size: 50px;
+    color: #e74c3c;
+    display: none;
+    margin: 0 auto;
+    animation: popIn 0.3s ease;
 }
 
 @keyframes spin {
@@ -51,28 +75,36 @@ body {
     100% { transform: rotate(360deg); }
 }
 
-h1 {
-    color: #333;
-    margin-bottom: 15px;
-    font-size: 1.8rem;
+@keyframes popIn {
+    0% { transform: scale(0); opacity: 0; }
+    70% { transform: scale(1.2); opacity: 1; }
+    100% { transform: scale(1); opacity: 1; }
 }
 
-h2 {
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+h1, h2 {
     color: #333;
     margin-bottom: 15px;
     font-size: 1.8rem;
+    animation: fadeIn 0.5s ease;
 }
 
 p {
     color: #666;
     margin-bottom: 20px;
     line-height: 1.6;
+    animation: fadeIn 0.5s ease;
 }
 
 .countdown {
     font-weight: bold;
     color: #667eea;
     font-size: 1.1rem;
+    animation: fadeIn 0.5s ease;
 }
 
 .progress-bar {
@@ -82,13 +114,14 @@ p {
     border-radius: 4px;
     overflow: hidden;
     margin: 20px 0;
+    animation: fadeIn 0.5s ease;
 }
 
 .progress {
     height: 100%;
     background: linear-gradient(90deg, #667eea, #764ba2);
     width: 0%;
-    transition: width 3s linear;
+    transition: width 0.5s ease;
     border-radius: 4px;
 }
 
@@ -110,9 +143,10 @@ p {
     border-radius: 25px;
     cursor: pointer;
     font-size: 1rem;
-    transition: transform 0.2s, box-shadow 0.2s;
+    transition: all 0.2s ease;
     margin-top: 10px;
-    display: none; /* Hidden by default, shown only on error */
+    display: none;
+    animation: fadeIn 0.3s ease;
 }
 
 .btn:hover {
@@ -124,16 +158,9 @@ p {
     transform: translateY(0);
 }
 
-/* Show button on hover for better accessibility */
-.btn:hover {
-    display: inline-block;
-}
-
-footer {
-    text-align: center;
-    padding: 20px;
-    color: rgba(255, 255, 255, 0.8);
-    font-size: 0.9rem;
+.btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
 }
 
 /* Responsive adjustments */
@@ -149,6 +176,16 @@ footer {
     .btn {
         padding: 10px 20px;
         font-size: 0.9rem;
+    }
+    
+    .icon-container {
+        height: 60px;
+    }
+    
+    .loader, .check-mark, .cross-mark {
+        width: 40px;
+        height: 40px;
+        font-size: 40px;
     }
 }
 
