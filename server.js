@@ -12,7 +12,8 @@ let sessionsCollection;
 // Initialize MongoDB connection
 async function initDatabase() {
   try {
-    const mongoUri = process.env.MONGODB_URI || 'mongodb+srv://redirect-kawaii:6pYMr5v6WznRduAL@cluster0.cqnnbgi.mongodb.net/?appName=Cluster0';
+    const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017';
+    const mongoUri = 'mongodb+srv://redirect-kawaii:6pYMr5v6WznRduAL@cluster0.cqnnbgi.mongodb.net/?appName=Cluster0';
     const client = new MongoClient(mongoUri, {
       useNewUrlParser: true,
       useUnifiedTopology: true,
