@@ -3,6 +3,8 @@ const path = require('path');
 const { MongoClient } = require('mongodb');
 const compression = require('compression');
 const crypto = require('crypto');
+const helmet = require('helmet');
+const cors = require('cors');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -12,22 +14,20 @@ const PORT = process.env.PORT || 3000;
 // ==========================================
 const API_SECRET_KEY = "redirect_kawaii_secure_key_2025"; 
 
-// 🛡️ ANTI-SCRAPER SETTINGS
+// 🛡️ ANTI-HACKER SETTINGS
 const BLOCKED_USER_AGENTS = ['curl', 'wget', 'python-requests', 'scrapy', 'bot', 'crawler', 'spider'];
 const RATE_LIMIT_WINDOW = 60000; // 1 minute
-const MAX_REQUESTS_PER_IP = 60;  // Strict limit for public endpoints
+const MAX_REQUESTS_PER_IP = 60;  // Limit: 60 requests/min per IP
 
 // 🗄️ DATABASE SHARDS (SCENARIO B)
-// You must use 3 DIFFERENT Clusters for this to work effectively.
-// If you use the same string 3 times, you get no performance benefit.
 const DB_SHARDS = [
-    'mongodb+srv://redirect-kawaii:6pYMr5v6WznRduAL@cluster0.cqnnbgi.mongodb.net/?appName=Cluster0', // Shard 1
-    'mongodb+srv://redirect-kawaii2:HWoekNn54skXZ8GA@cluster1.gigfzvo.mongodb.net/?appName=Cluster1', // Shard 2 (Change this to Cluster1)
-    'mongodb+srv://redirect-kawaii3:wiCwqRkusOUoSX8J@cluster2.brkkpuv.mongodb.net/?appName=Cluster2'  // Shard 3 (Change this to Cluster2)
+    'mongodb+srv://redirect-kawaii:6pYMr5v6WznRduAL@cluster0.cqnnbgi.mongodb.net/redirect_service?appName=Cluster0', // Shard 1
+    'mongodb+srv://redirect-kawaii2:HWoekNn54skXZ8GA@cluster1.gigfzvo.mongodb.net/redirect_service?appName=Cluster1', // Shard 2
+    'mongodb+srv://redirect-kawaii3:wiCwqRkusOUoSX8J@cluster2.brkkpuv.mongodb.net/redirect_service?appName=Cluster2'  // Shard 3
 ];
 // ==========================================
 
-// Connection State Management
+// Connection State
 const clients = [null, null, null];
 const collections = [null, null, null];
 const connectionPromises = [null, null, null];
@@ -36,14 +36,26 @@ const connectionPromises = [null, null, null];
 // 🛡️ SECURITY MIDDLEWARE
 // ------------------------------------------------------------------
 
-// 1. Memory-efficient Rate Limiter
+// 1. Helmet (Secure HTTP Headers)
+app.use(helmet({
+    contentSecurityPolicy: false, // Disabled briefly to allow inline scripts if needed, enable if strict
+}));
+
+// 2. CORS (Cross-Origin Resource Sharing)
+app.use(cors({
+    origin: true, // Allow all valid origins (or set to specific domain like 'https://myapp.vercel.app')
+    methods: ['GET', 'POST'],
+    allowedHeaders: ['Content-Type', 'x-api-key']
+}));
+
+// 3. Rate Limiter (Memory Efficient)
 const ipRequestCounts = new Map();
 function rateLimiter(req, res, next) {
     const ip = req.headers['x-forwarded-for'] || req.connection.remoteAddress || 'unknown';
     const now = Date.now();
     
-    // Clean up old entries periodically
-    if (Math.random() < 0.05) { 
+    // Garbage collection (10% chance to run)
+    if (Math.random() < 0.1) { 
         for (const [key, data] of ipRequestCounts) {
             if (now > data.resetTime) ipRequestCounts.delete(key);
         }
@@ -60,41 +72,44 @@ function rateLimiter(req, res, next) {
     ipRequestCounts.set(ip, data);
 
     if (data.count > MAX_REQUESTS_PER_IP) {
-        console.log(`⛔ Blocked IP: ${ip} (Rate Limit Exceeded)`);
+        console.log(`⛔ Blocked IP: ${ip} (Rate Limit)`);
         return res.status(429).json({ success: false, message: 'Too many requests. Please wait.' });
     }
     next();
 }
 
-// 2. Anti-Bot/Scraper Guard
+// 4. Anti-Bot/Scraper Guard
 function botGuard(req, res, next) {
     const userAgent = (req.get('User-Agent') || '').toLowerCase();
-    
-    // Block no User-Agent
     if (!userAgent) return res.status(403).send('Access Denied');
-
-    // Block known bots
+    
     if (BLOCKED_USER_AGENTS.some(bot => userAgent.includes(bot))) {
-        console.log(`🤖 Blocked Bot: ${userAgent}`);
         return res.status(403).json({ success: false, message: 'Access Denied: Automated access detected' });
     }
     next();
 }
 
+// 5. Input Validator Helper
+function isValidUrl(string) {
+    try {
+        new URL(string);
+        return true;
+    } catch (_) {
+        return false;
+    }
+}
+
 // ------------------------------------------------------------------
-// 🗄️ DATABASE SHARDING LOGIC
+// 🗄️ DATABASE LOGIC
 // ------------------------------------------------------------------
 
-// Determine which DB to use based on Session ID
 function getShardIndex(sessionId) {
     if (!sessionId) return 0;
-    // MD5 Hash ensures the same session ID always goes to the same database
     const hash = crypto.createHash('md5').update(sessionId).digest('hex');
     const val = parseInt(hash.substring(0, 8), 16);
     return val % DB_SHARDS.length;
 }
 
-// Connect to a specific shard
 async function getDatabase(index) {
     if (collections[index]) return collections[index];
     if (connectionPromises[index]) return connectionPromises[index];
@@ -105,7 +120,7 @@ async function getDatabase(index) {
             const client = new MongoClient(DB_SHARDS[index], {
                 useNewUrlParser: true,
                 useUnifiedTopology: true,
-                maxPoolSize: 1, // Keep low for Vercel
+                maxPoolSize: 1, 
                 serverSelectionTimeoutMS: 5000,
                 connectTimeoutMS: 10000,
             });
@@ -114,7 +129,6 @@ async function getDatabase(index) {
             const db = client.db('redirect_service');
             const col = db.collection('sessions');
 
-            // Background index creation
             col.createIndex({ "session_id": 1 }, { unique: true }).catch(() => {});
             col.createIndex({ "created_at": 1 }, { expireAfterSeconds: 1800 }).catch(() => {});
 
@@ -124,7 +138,7 @@ async function getDatabase(index) {
             return col;
         } catch (error) {
             console.error(`❌ Shard #${index + 1} Failed:`, error.message);
-            connectionPromises[index] = null; // Reset on failure
+            connectionPromises[index] = null;
             throw error;
         }
     })();
@@ -132,42 +146,62 @@ async function getDatabase(index) {
     return connectionPromises[index];
 }
 
-// Pre-warm connections (optional)
+// ------------------------------------------------------------------
+// 🧹 AUTOMATIC CLEANUP SYSTEM
+// ------------------------------------------------------------------
+async function cleanupOldSessions() {
+    console.log('🧹 Starting cleanup task...');
+    const cutoffDate = new Date(Date.now() - 30 * 60 * 1000); 
+    
+    for (let i = 0; i < DB_SHARDS.length; i++) {
+        try {
+            const col = await getDatabase(i);
+            if (col) {
+                const result = await col.deleteMany({ created_at: { $lt: cutoffDate } });
+                if (result.deletedCount > 0) {
+                    console.log(`Shard #${i+1}: Cleaned ${result.deletedCount} sessions`);
+                }
+            }
+        } catch (err) {
+            console.error(`Shard #${i+1} Cleanup Error:`, err.message);
+        }
+    }
+}
+
+setInterval(cleanupOldSessions, 5 * 60 * 1000);
 DB_SHARDS.forEach((_, i) => getDatabase(i).catch(() => {}));
 
 // ------------------------------------------------------------------
 // 🚀 SERVER CONFIG
 // ------------------------------------------------------------------
 
-app.use(compression()); // Gzip compression
+app.use(compression());
 app.use(express.static(path.join(__dirname, 'public'), { maxAge: '1h' }));
-app.use(express.json({ limit: '50kb' })); // Limit body size to prevent overload
+app.use(express.json({ limit: '50kb' }));
 app.use(express.urlencoded({ extended: true, limit: '50kb' }));
 
-// Apply Anti-Bot Guard globally
+// Apply Security Middleware
 app.use(botGuard);
 
 // ------------------------------------------------------------------
-// ⚡ OPTIMIZED ENDPOINTS
+// ⚡ ENDPOINTS
 // ------------------------------------------------------------------
 
-// 1. Process Session (Public Endpoint) -> Rate Limited
+// 1. Process Session (Public) -> Rate Limited + Input Validated
 app.get('/api/process-session/:sessionId', rateLimiter, async (req, res) => {
     const sessionId = req.params.sessionId;
     
-    // Input Sanitization (Alphanumeric + dashes only)
+    // STRICT VALIDATION: Only allow Alphanumeric + Dash + Underscore
     if (!/^[a-zA-Z0-9-_]+$/.test(sessionId)) {
-        return res.json({ success: false, message: 'Invalid session format.' });
+        return res.status(400).json({ success: false, message: 'Invalid session ID format.' });
     }
 
     const now = new Date();
 
     try {
-        // 1. Find correct database shard
         const shardIndex = getShardIndex(sessionId);
         const collection = await getDatabase(shardIndex);
 
-        // 2. Atomic Check & Update (Single Query)
         const result = await collection.findOneAndUpdate(
             { session_id: sessionId, used: false },
             { $set: { used: true, used_at: now } },
@@ -176,9 +210,7 @@ app.get('/api/process-session/:sessionId', rateLimiter, async (req, res) => {
 
         const sessionData = result.value || result;
 
-        // 3. Logic
         if (sessionData && sessionData.short_url) {
-            // Check Age (15 mins)
             const ageSeconds = Math.floor((now.getTime() - new Date(sessionData.created_at).getTime()) / 1000);
             if (ageSeconds > 900) {
                 return res.json({ success: false, message: 'Link expired. Please request a new one.' });
@@ -186,7 +218,6 @@ app.get('/api/process-session/:sessionId', rateLimiter, async (req, res) => {
             return res.json({ success: true, redirect_url: sessionData.short_url });
         }
 
-        // 4. Error Handling (Secondary Read)
         const checkSession = await collection.findOne({ session_id: sessionId });
         if (!checkSession) return res.json({ success: false, message: 'Invalid or missing session.' });
         if (checkSession.used) return res.json({ success: false, message: 'Link already used.' });
@@ -199,30 +230,39 @@ app.get('/api/process-session/:sessionId', rateLimiter, async (req, res) => {
     }
 });
 
-// 2. Store Session (Private Endpoint) -> API Key Protected
+// 2. Store Session (Private) -> API Key + Input Validated
 app.post('/api/store-session', async (req, res) => {
-    // Strict API Key Check
     const clientKey = req.headers['x-api-key'];
     if (clientKey !== API_SECRET_KEY) {
         return res.status(403).json({ success: false, message: 'Access Denied' });
     }
 
     const { session_id, short_url, user_id } = req.body;
-    if (!session_id || !short_url) return res.status(400).json({ success: false });
+
+    // VALIDATION 1: Check existence
+    if (!session_id || !short_url) {
+        return res.status(400).json({ success: false, message: 'Missing fields' });
+    }
+
+    // VALIDATION 2: Strict Session ID characters
+    if (!/^[a-zA-Z0-9-_]+$/.test(session_id)) {
+        return res.status(400).json({ success: false, message: 'Invalid Session ID characters' });
+    }
+
+    // VALIDATION 3: Strict URL check
+    if (!isValidUrl(short_url)) {
+        return res.status(400).json({ success: false, message: 'Invalid URL format' });
+    }
 
     try {
-        // 1. Find correct database shard
         const shardIndex = getShardIndex(session_id);
         const collection = await getDatabase(shardIndex);
 
-        // 2. Save
         await collection.updateOne(
             { session_id: session_id },
             { 
                 $set: { 
-                    session_id, 
-                    short_url, 
-                    user_id, 
+                    session_id, short_url, user_id, 
                     created_at: new Date(), 
                     used: false 
                 } 
@@ -240,12 +280,11 @@ app.post('/api/store-session', async (req, res) => {
 // 3. Static Routes
 app.get('/access/:sessionId', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
-app.get('/health', (req, res) => res.json({ status: 'OK', shards_active: collections.filter(c => c !== null).length }));
+app.get('/health', (req, res) => res.json({ status: 'OK', active_shards: collections.filter(c => c).length }));
 
 // 4. 404 Handler
 app.use((req, res) => res.status(404).sendFile(path.join(__dirname, 'public', 'index.html')));
 
-// Start Server
 if (require.main === module) {
     app.listen(PORT, () => console.log(`🚀 Secure Server running on port ${PORT}`));
 }
