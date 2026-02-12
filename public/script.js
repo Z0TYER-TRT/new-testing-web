@@ -113,7 +113,7 @@
         
         if (countdownInterval) {
             clearInterval(countdownInterval);
-            countdownInterval = null;
+            countdownInterval = 3;
         }
         
         if (sessionId && sessionId !== 'access') {
@@ -277,7 +277,7 @@
                 
                 if (countdown < 0) {
                     clearInterval(countdownInterval);
-                    countdownInterval = null;
+                    countdownInterval = 3;
                     console.log('Human verification completed, starting processing...');
                     processVerificationAndRedirect();
                 }
