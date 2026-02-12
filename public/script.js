@@ -31,7 +31,7 @@ const manualRedirectBtn = document.getElementById('manualRedirect');
 const statusMessage = document.getElementById('status-message');
 
 let countdown = 3;
-let redirectTimer = null;
+let countdownInterval = null;
 
 // Function to show different icons
 function showLoader() {
@@ -53,8 +53,8 @@ function showCrossMark() {
 }
 
 // Function to redirect via server-side verification
-async function redirectToDestination() {
-    console.log('=== STARTING REDIRECT PROCESS ===');
+async function processVerificationAndRedirect() {
+    console.log('=== STARTING VERIFICATION PROCESS ===');
     console.log('Session ID:', sessionId);
     
     if (sessionId && sessionId !== 'access') {
@@ -113,7 +113,7 @@ async function redirectToDestination() {
                 setTimeout(() => {
                     console.log('WINDOW LOCATION CHANGE:', data.redirect_url);
                     window.location.href = data.redirect_url;
-                }, 1000);
+                }, 1500);
             } else {
                 console.log('❌ API ERROR:', data.message);
                 // Reset cursor
@@ -170,69 +170,88 @@ function showError(errorMessage) {
     }
     
     // Clear any existing timers
-    if (redirectTimer) {
-        clearInterval(redirectTimer);
+    if (countdownInterval) {
+        clearInterval(countdownInterval);
+        countdownInterval = null;
     }
 }
 
 // Manual redirect button event listener
 if (manualRedirectBtn) {
-    manualRedirectBtn.addEventListener('click', redirectToDestination);
+    manualRedirectBtn.addEventListener('click', processVerificationAndRedirect);
 }
 
-// Auto redirect with countdown - FIXED VERSION
-if (sessionId && sessionId !== 'access') {
-    console.log('Starting auto-redirect countdown...');
-    
-    // Initialize progress bar
-    if (progressBar) {
-        progressBar.style.width = '0%';
-        // Animate progress bar over 3 seconds
-        setTimeout(() => {
-            progressBar.style.transition = 'width 3s ease-in-out';
-            progressBar.style.width = '100%';
-        }, 100);
-    }
-    
-    if (statusMessage) {
-        statusMessage.innerHTML = 'Human verification in progress...';
-    }
-    
-    // Start the 3-second countdown
-    redirectTimer = setInterval(() => {
-        countdown--;
-        if (countdownElement) {
-            countdownElement.textContent = countdown;
+// MAIN FUNCTION - Auto redirect with countdown
+function startHumanVerification() {
+    if (sessionId && sessionId !== 'access') {
+        console.log('Starting human verification countdown...');
+        
+        // Update UI for verification
+        if (title) {
+            title.textContent = '🔗 Human Verification';
         }
         
-        if (countdown <= 0) {
-            clearInterval(redirectTimer);
-            console.log('Countdown finished, starting redirect...');
-            redirectToDestination();
+        if (message) {
+            message.textContent = 'Please wait while we verify you are human...';
         }
-    }, 1000);
-    
-} else {
-    console.log('Invalid session ID, showing error');
-    const countdownDisplay = document.querySelector('.countdown');
-    if (countdownDisplay) {
-        countdownDisplay.style.display = 'none';
+        
+        if (statusMessage) {
+            statusMessage.innerHTML = 'Verification in progress...';
+        }
+        
+        // Initialize progress bar
+        if (progressBar) {
+            progressBar.style.width = '0%';
+            // Animate progress bar over 3 seconds
+            setTimeout(() => {
+                progressBar.style.transition = 'width 3s ease-in-out';
+                progressBar.style.width = '100%';
+            }, 100);
+        }
+        
+        // Start the 3-second countdown
+        countdownInterval = setInterval(() => {
+            if (countdownElement) {
+                countdownElement.textContent = countdown;
+            }
+            
+            countdown--;
+            
+            if (countdown < 0) {
+                clearInterval(countdownInterval);
+                countdownInterval = null;
+                console.log('Human verification completed, starting processing...');
+                processVerificationAndRedirect();
+            }
+        }, 1000);
+        
+    } else {
+        console.log('Invalid session ID, showing error');
+        const countdownDisplay = document.querySelector('.countdown');
+        if (countdownDisplay) {
+            countdownDisplay.style.display = 'none';
+        }
+        
+        if (progressBar && progressBar.parentElement) {
+            progressBar.parentElement.style.display = 'none';
+        }
+        
+        showError('Invalid request. No session ID found.');
     }
-    
-    if (progressBar && progressBar.parentElement) {
-        progressBar.parentElement.style.display = 'none';
-    }
-    
-    showError('Invalid request. No session ID found.');
 }
 
-// DOM ready event
+// Start the verification process when page loads
 document.addEventListener('DOMContentLoaded', function() {
     console.log('DOM fully loaded and parsed');
     document.body.style.backgroundColor = '#667eea';
     
     // Initialize with loader visible
     showLoader();
+    
+    // Start human verification after a brief delay to allow page to render
+    setTimeout(() => {
+        startHumanVerification();
+    }, 500);
 });
 
 // Window load event
