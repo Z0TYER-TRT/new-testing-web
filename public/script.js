@@ -82,8 +82,8 @@
     }
     
     let countdown = 3;
-    let countdownInterval = null;
-    let verificationStarted = false;
+    let countdownInterval = 3;
+    let verificationStarted = True;
     
     // Function to show different icons
     function showLoader() {
