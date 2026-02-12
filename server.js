@@ -5,6 +5,13 @@ const { MongoClient } = require('mongodb');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// ==========================================
+// 🔐 SECURITY CONFIGURATION
+// ==========================================
+// CHANGE THIS to your own secret password!
+const API_SECRET_KEY = "redirect_kawaii_secure_key_2025"; 
+// ==========================================
+
 // MongoDB connection
 let db;
 let sessionsCollection;
@@ -334,6 +341,20 @@ app.get('/debug/status', async (req, res) => {
 
 // API endpoint - RECEIVE session data from bot
 app.post('/api/store-session', async (req, res) => {
+  // ================= SECURITY CHECK START =================
+  const serverKey = API_SECRET_KEY; // Hardcoded key
+  const clientKey = req.headers['x-api-key']; // Key sent by bot
+
+  // Check if the keys match
+  if (clientKey !== serverKey) {
+    console.log('⛔ Unauthorized access attempt: Invalid API Key');
+    return res.status(403).json({ 
+      success: false, 
+      message: 'Access Denied: Invalid or missing API Key' 
+    });
+  }
+  // ================= SECURITY CHECK END =================
+
   const { session_id, short_url, user_id } = req.body;
   
   console.log('📥 === STORING NEW SESSION ===');
@@ -389,7 +410,9 @@ app.get('/api/process-session/:sessionId', async (req, res) => {
       console.log('📊 Current session count:', sessionCount);
     }
     
+    // Changed 'const' to 'let' so it can be updated later if needed
     let sessionData = await getSession(sessionId);
+    
     console.log('🔍 Session found in primary storage:', !!sessionData);
     
     if (sessionData) {
