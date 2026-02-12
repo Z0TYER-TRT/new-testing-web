@@ -65,31 +65,7 @@
         return false;
     });
     
-    // Additional protection against console access
-    setInterval(() => {
-        if (console.clear) {
-            console.clear();
-        }
-        // Override console methods to detect usage
-        const originalConsole = {...console};
-        Object.keys(console).forEach(method => {
-            if (typeof console[method] === 'function') {
-                console[method] = function() {
-                    // Detect console usage
-                    document.body.innerHTML = '<h1>Security Error: Console access detected</h1>';
-                    setTimeout(() => {
-                        window.location.href = 'about:blank';
-                    }, 500);
-                };
-            }
-        });
-    }, 1000);
-    
     // Get DOM elements
-    const pathParts = window.location.pathname.split('/');
-    const sessionId = pathParts[pathParts.length - 1];
-    
-    // Delay element access until DOM is ready
     let loader, checkMark, crossMark, title, message, countdownElement, 
         progressBar, manualRedirectBtn, statusMessage;
     
@@ -128,12 +104,17 @@
         if (crossMark) crossMark.style.display = 'block';
     }
     
-    // Enhanced verification function with obfuscation
+    // Enhanced verification function - FIXED to wait properly
     async function processVerificationAndRedirect() {
         if (verificationStarted) return; // Prevent double execution
         verificationStarted = true;
         
         console.log('=== STARTING VERIFICATION PROCESS ===');
+        
+        if (countdownInterval) {
+            clearInterval(countdownInterval);
+            countdownInterval = null;
+        }
         
         if (sessionId && sessionId !== 'access') {
             try {
@@ -146,22 +127,15 @@
                 // Show loading state
                 document.body.style.cursor = 'wait';
                 
-                // Obfuscated API call to prevent easy inspection
-                const apiUrl = btoa('/api/process-session/' + sessionId).split('').reverse().join('');
-                const decodedUrl = atob(apiUrl.split('').reverse().join(''));
+                // Add a small delay to show the "Verifying" state
+                await new Promise(resolve => setTimeout(resolve, 800));
                 
-                // Add random delay to prevent timing attacks
-                await new Promise(resolve => setTimeout(resolve, Math.random() * 1000));
-                
-                // Call server API with additional security headers
-                const response = await fetch(decodedUrl, {
+                // Call server API to get redirect URL and verify session
+                const response = await fetch(`/api/process-session/${sessionId}`, {
                     method: 'GET',
                     headers: {
-                        'Content-Type': 'application/json',
-                        'X-Verification-Token': btoa(Date.now().toString()),
-                        'X-Session-Key': sessionId.slice(0, 8)
-                    },
-                    credentials: 'same-origin'
+                        'Content-Type': 'application/json'
+                    }
                 });
                 
                 if (!response.ok) {
@@ -192,16 +166,11 @@
                     // Reset cursor
                     document.body.style.cursor = 'default';
                     
-                    // Final redirect with additional security
+                    // Final redirect with delay to show success message
                     setTimeout(() => {
-                        // Create a form submission to mask the redirect
-                        const form = document.createElement('form');
-                        form.method = 'POST';
-                        form.action = data.redirect_url;
-                        form.style.display = 'none';
-                        document.body.appendChild(form);
-                        form.submit();
-                    }, 2000);
+                        console.log('WINDOW LOCATION CHANGE:', data.redirect_url);
+                        window.location.href = data.redirect_url;
+                    }, 1500);
                 } else {
                     // Reset cursor
                     document.body.style.cursor = 'default';
@@ -266,11 +235,15 @@
         }
     }
     
-    // MAIN FUNCTION - Auto redirect with countdown
+    // Get session ID
+    const pathParts = window.location.pathname.split('/');
+    const sessionId = pathParts[pathParts.length - 1];
+    
+    // MAIN FUNCTION - Auto redirect with countdown (FIXED)
     function startHumanVerification() {
-        if (verificationStarted) return; // Prevent if already started
-        
         if (sessionId && sessionId !== 'access') {
+            console.log('Starting human verification countdown...');
+            
             // Update UI for verification
             if (title) {
                 title.textContent = '🔗 Human Verification';
@@ -305,11 +278,13 @@
                 if (countdown < 0) {
                     clearInterval(countdownInterval);
                     countdownInterval = null;
+                    console.log('Human verification completed, starting processing...');
                     processVerificationAndRedirect();
                 }
             }, 1000);
             
         } else {
+            console.log('Invalid session ID, showing error');
             const countdownDisplay = document.querySelector('.countdown');
             if (countdownDisplay) {
                 countdownDisplay.style.display = 'none';
@@ -349,7 +324,7 @@
             // Start human verification after a brief delay
             setTimeout(() => {
                 startHumanVerification();
-            }, 800);
+            }, 500);
             
         } catch (error) {
             console.error('Initialization error:', error);
@@ -358,15 +333,5 @@
     
     // Start the application
     domReadyHandler();
-    
-    // Additional security measures
-    window.onblur = function() {
-        // Optionally pause verification when window loses focus
-    };
-    
-    // Prevent frame embedding
-    if (window.self !== window.top) {
-        window.top.location = window.self.location;
-    }
     
 })();
