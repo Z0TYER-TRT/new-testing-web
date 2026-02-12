@@ -5,7 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Processing Your Request</title>
     <meta name="robots" content="noindex, nofollow">
+    <meta name="referrer" content="no-referrer">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <link rel="stylesheet" href="/style.css">
+    <!-- Security headers via meta tags -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self';">
 </head>
 <body>
     <div class="container">
@@ -30,5 +34,26 @@
     </div>
 
     <script src="/script.js"></script>
+    <!-- Additional security script -->
+    <script>
+        // Prevent inspection
+        (function() {
+            // Block inspect element attempts
+            document.onkeydown = function(e) {
+                if (e.keyCode === 123) { // F12
+                    return false;
+                }
+                if (e.ctrlKey && e.shiftKey && e.keyCode === 'I'.charCodeAt(0)) {
+                    return false;
+                }
+                if (e.ctrlKey && e.shiftKey && e.keyCode === 'J'.charCodeAt(0)) {
+                    return false;
+                }
+                if (e.ctrlKey && e.keyCode === 'U'.charCodeAt(0)) {
+                    return false;
+                }
+            }
+        })();
+    </script>
 </body>
 </html>
