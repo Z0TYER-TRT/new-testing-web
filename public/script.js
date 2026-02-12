@@ -31,6 +31,7 @@ const manualRedirectBtn = document.getElementById('manualRedirect');
 const statusMessage = document.getElementById('status-message');
 
 let countdown = 3;
+let redirectTimer = null;
 
 // Function to show different icons
 function showLoader() {
@@ -51,7 +52,7 @@ function showCrossMark() {
     crossMark.style.display = 'block';
 }
 
-// Function to redirect via server-side verification - OPTIMIZED VERSION
+// Function to redirect via server-side verification
 async function redirectToDestination() {
     console.log('=== STARTING REDIRECT PROCESS ===');
     console.log('Session ID:', sessionId);
@@ -87,7 +88,7 @@ async function redirectToDestination() {
             if (data.success && data.redirect_url) {
                 console.log('✅ SUCCESS: Redirecting to', data.redirect_url);
                 
-                // Show success state immediately
+                // Show success state
                 showCheckMark();
                 if (progressBar) {
                     progressBar.style.width = '100%';
@@ -108,10 +109,11 @@ async function redirectToDestination() {
                 // Reset cursor
                 document.body.style.cursor = 'default';
                 
-                // IMMEDIATE redirect - removed the 1.5 second delay
-                console.log('WINDOW LOCATION CHANGE:', data.redirect_url);
-                window.location.href = data.redirect_url;
-                
+                // Redirect after a short delay to allow visual feedback
+                setTimeout(() => {
+                    console.log('WINDOW LOCATION CHANGE:', data.redirect_url);
+                    window.location.href = data.redirect_url;
+                }, 1000);
             } else {
                 console.log('❌ API ERROR:', data.message);
                 // Reset cursor
@@ -166,6 +168,11 @@ function showError(errorMessage) {
     if (statusMessage) {
         statusMessage.innerHTML = '<span class="error">Error occurred</span>';
     }
+    
+    // Clear any existing timers
+    if (redirectTimer) {
+        clearInterval(redirectTimer);
+    }
 }
 
 // Manual redirect button event listener
@@ -173,28 +180,37 @@ if (manualRedirectBtn) {
     manualRedirectBtn.addEventListener('click', redirectToDestination);
 }
 
-// Optimized auto redirect - faster execution
+// Auto redirect with countdown - FIXED VERSION
 if (sessionId && sessionId !== 'access') {
-    console.log('Starting immediate redirect process...');
+    console.log('Starting auto-redirect countdown...');
     
-    // Simplified progress indication
+    // Initialize progress bar
     if (progressBar) {
-        progressBar.style.width = '30%'; // Start at 30%
-        // Quick progress to 100%
+        progressBar.style.width = '0%';
+        // Animate progress bar over 3 seconds
         setTimeout(() => {
-            progressBar.style.transition = 'width 0.5s ease';
+            progressBar.style.transition = 'width 3s ease-in-out';
             progressBar.style.width = '100%';
         }, 100);
     }
     
     if (statusMessage) {
-        statusMessage.innerHTML = 'Processing your request...';
+        statusMessage.innerHTML = 'Human verification in progress...';
     }
     
-    // Start redirect process immediately with minimal delay
-    setTimeout(() => {
-        redirectToDestination();
-    }, 300); // Only 300ms delay instead of waiting for countdown
+    // Start the 3-second countdown
+    redirectTimer = setInterval(() => {
+        countdown--;
+        if (countdownElement) {
+            countdownElement.textContent = countdown;
+        }
+        
+        if (countdown <= 0) {
+            clearInterval(redirectTimer);
+            console.log('Countdown finished, starting redirect...');
+            redirectToDestination();
+        }
+    }, 1000);
     
 } else {
     console.log('Invalid session ID, showing error');
