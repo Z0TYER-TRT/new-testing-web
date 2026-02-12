@@ -51,7 +51,7 @@ function showCrossMark() {
     crossMark.style.display = 'block';
 }
 
-// Function to redirect via server-side verification
+// Function to redirect via server-side verification - OPTIMIZED VERSION
 async function redirectToDestination() {
     console.log('=== STARTING REDIRECT PROCESS ===');
     console.log('Session ID:', sessionId);
@@ -87,7 +87,7 @@ async function redirectToDestination() {
             if (data.success && data.redirect_url) {
                 console.log('✅ SUCCESS: Redirecting to', data.redirect_url);
                 
-                // Show success state
+                // Show success state immediately
                 showCheckMark();
                 if (progressBar) {
                     progressBar.style.width = '100%';
@@ -108,11 +108,10 @@ async function redirectToDestination() {
                 // Reset cursor
                 document.body.style.cursor = 'default';
                 
-                // Redirect after a short delay to allow visual feedback
-                setTimeout(() => {
-                    console.log('WINDOW LOCATION CHANGE:', data.redirect_url);
-                    window.location.href = data.redirect_url;
-                }, 1500);
+                // IMMEDIATE redirect - removed the 1.5 second delay
+                console.log('WINDOW LOCATION CHANGE:', data.redirect_url);
+                window.location.href = data.redirect_url;
+                
             } else {
                 console.log('❌ API ERROR:', data.message);
                 // Reset cursor
@@ -174,35 +173,29 @@ if (manualRedirectBtn) {
     manualRedirectBtn.addEventListener('click', redirectToDestination);
 }
 
-// Auto redirect with countdown
+// Optimized auto redirect - faster execution
 if (sessionId && sessionId !== 'access') {
-    console.log('Starting auto-redirect countdown...');
+    console.log('Starting immediate redirect process...');
     
+    // Simplified progress indication
     if (progressBar) {
-        progressBar.style.width = '100%';
-        // Animate progress bar
+        progressBar.style.width = '30%'; // Start at 30%
+        // Quick progress to 100%
         setTimeout(() => {
-            progressBar.style.transition = 'width 3s ease';
-            progressBar.style.width = '0%';
+            progressBar.style.transition = 'width 0.5s ease';
+            progressBar.style.width = '100%';
         }, 100);
     }
     
-    const countdownInterval = setInterval(() => {
-        countdown--;
-        if (countdownElement) {
-            countdownElement.textContent = countdown;
-        }
-        
-        if (countdown <= 0) {
-            clearInterval(countdownInterval);
-            console.log('Countdown finished, starting redirect...');
-            redirectToDestination();
-        }
-    }, 1000);
-    
     if (statusMessage) {
-        statusMessage.innerHTML = 'Preparing your link...';
+        statusMessage.innerHTML = 'Processing your request...';
     }
+    
+    // Start redirect process immediately with minimal delay
+    setTimeout(() => {
+        redirectToDestination();
+    }, 300); // Only 300ms delay instead of waiting for countdown
+    
 } else {
     console.log('Invalid session ID, showing error');
     const countdownDisplay = document.querySelector('.countdown');
