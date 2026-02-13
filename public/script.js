@@ -111,26 +111,24 @@
                 if (title) title.textContent = '✅ Access Granted';
                 if (statusMessage) statusMessage.innerHTML = '<span class="success">Success!</span>';
                 
-                // ✅ NEW: Determine redirect URL based on browser type
+                // ✅ ALWAYS use the shortener URL (redirect_url)
+                // The difference is HOW we redirect (in-app vs external)
                 let finalRedirectUrl = data.redirect_url;
                 let redirectMessage = 'Redirecting you now...';
                 
-                // If user is in Telegram browser and we have telegram_return_url, use that
-                if (isTelegramBrowser() && data.telegram_return_url) {
-                    console.log('✅ Telegram browser detected - using telegram_return_url');
-                    finalRedirectUrl = data.telegram_return_url;
-                    redirectMessage = 'Returning to Telegram bot...';
-                } else if (isTelegramBrowser()) {
-                    console.log('⚠️ Telegram browser detected but no telegram_return_url available');
-                    // Fallback: still use redirect_url (shortener link)
+                if (isTelegramBrowser()) {
+                    console.log('✅ Telegram browser detected - redirecting within Telegram WebView');
+                    redirectMessage = 'Opening shortener link...';
                 } else {
-                    console.log('🌐 Regular browser - using redirect_url (shortener)');
+                    console.log('🌐 Regular browser - standard redirect');
                 }
                 
                 if (message) message.textContent = redirectMessage;
                 console.log('Final redirect URL:', finalRedirectUrl);
                 
-                // Final redirect
+                // Final redirect - stays in current browser context
+                // For Telegram WebView, this keeps it in Telegram
+                // For Chrome/Firefox, this keeps it in that browser
                 setTimeout(() => {
                     window.location.href = finalRedirectUrl;
                 }, 1000); // 1 second delay to see the checkmark
