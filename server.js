@@ -168,10 +168,7 @@ app.use(botGuard);
 
 /**
  * 1. Process Session (Public) — called by the frontend JS on the /access/:sessionId page
- *
- * ✅ UPDATED: Returns both shortener URL and Telegram deep link
- * Frontend will always use shortener URL, but we provide telegram_return_url
- * for reference (in case shortener needs to know where to redirect after)
+ * ✅ NOW: Returns only redirect_path, no URLs exposed to client
  */
 app.get('/api/process-session/:sessionId', rateLimiter, async (req, res) => {
     const sessionId = req.params.sessionId;
@@ -202,31 +199,17 @@ app.get('/api/process-session/:sessionId', rateLimiter, async (req, res) => {
             return res.json({ success: false, message: 'Session data incomplete. Please try again.' });
         }
 
-        // ✅ Build the Telegram deep link using stored main_id + bot_username
-        let telegram_return_url = null;
-        if (sessionData.main_id && sessionData.bot_username) {
-            telegram_return_url = `https://t.me/${sessionData.bot_username}?start=${sessionData.main_id}`;
+        // Check if already used
+        if (sessionData.used) {
+            return res.json({ success: false, message: 'This link has already been used. Please request a new one.' });
         }
 
-        // Mark session as used now
-        await collection.updateOne(
-            { session_id: sessionId },
-            { $set: { used: true, used_at: now } }
-        );
+        console.log(`[Process Session] ✅ session=${sessionId}, preparing redirect`);
 
-        console.log(`[Process Session] ✅ session=${sessionId}, short_url=${sessionData.short_url}, telegram_return=${telegram_return_url}`);
-
+        // ✅ Return ONLY the server redirect path - no URLs exposed
         return res.json({
             success: true,
-            // The shortener URL - THIS is what frontend redirects to
-            short_url: sessionData.short_url,
-            // The Telegram deep link (for reference/future use)
-            telegram_return_url: telegram_return_url,
-            // Main redirect URL - ALWAYS the shortener
-            redirect_url: sessionData.short_url,
-            // Send back bot info in case frontend needs it
-            main_id: sessionData.main_id,
-            bot_username: sessionData.bot_username
+            redirect_path: `/go/${sessionId}` // Client will navigate to this server endpoint
         });
 
     } catch (error) {
@@ -236,13 +219,61 @@ app.get('/api/process-session/:sessionId', rateLimiter, async (req, res) => {
 });
 
 /**
- * 2. Store Session (Private) — called by the Python bot
- *
- * ✅ IMPORTANT: When creating the shortener URL in your Python bot,
- * make sure the shortener's DESTINATION URL is the Telegram deep link:
- * https://t.me/your_bot?start=main_id
- * 
- * That way, after shortener completes, it automatically returns to Telegram
+ * 2. Server-Side Redirect Endpoint — INVISIBLE TO USER
+ * This endpoint receives the request and redirects directly to shortener URL
+ * The shortener URL is NEVER exposed to the client
+ */
+app.get('/go/:sessionId', rateLimiter, async (req, res) => {
+    const sessionId = req.params.sessionId;
+
+    if (!/^[a-zA-Z0-9-_]+$/.test(sessionId)) {
+        return res.status(400).send('Invalid session');
+    }
+
+    const now = new Date();
+
+    try {
+        const shardIndex = getShardIndex(sessionId);
+        const collection = await getDatabase(shardIndex);
+
+        const sessionData = await collection.findOne({ session_id: sessionId });
+
+        if (!sessionData || !sessionData.short_url) {
+            return res.status(404).send('Session not found or expired');
+        }
+
+        // Check if already used
+        if (sessionData.used) {
+            return res.status(410).send('Link already used');
+        }
+
+        // Check age
+        const ageSeconds = Math.floor((now.getTime() - new Date(sessionData.created_at).getTime()) / 1000);
+        if (ageSeconds > 900) {
+            return res.status(410).send('Link expired');
+        }
+
+        // Mark as used
+        await collection.updateOne(
+            { session_id: sessionId },
+            { $set: { used: true, used_at: now } }
+        );
+
+        console.log(`[Server Redirect] ✅ session=${sessionId} → shortener (hidden)`);
+
+        // ✅ Direct 302 redirect to shortener URL
+        // User sees only your Vercel domain, then shortener blog page
+        // Shortener URL is completely invisible
+        return res.redirect(302, sessionData.short_url);
+
+    } catch (error) {
+        console.error('Redirect Error:', error.message);
+        return res.status(500).send('Server error');
+    }
+});
+
+/**
+ * 3. Store Session (Private) — called by the Python bot
  */
 app.post('/api/store-session', async (req, res) => {
     const clientKey = req.headers['x-api-key'];
@@ -297,7 +328,7 @@ app.post('/api/store-session', async (req, res) => {
     }
 });
 
-// 3. Static Routes
+// 4. Static Routes
 app.get('/access/:sessionId', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.get('/health', (req, res) => res.json({
@@ -305,7 +336,7 @@ app.get('/health', (req, res) => res.json({
     active_shards: collections.filter(c => c).length
 }));
 
-// 4. 404 Handler
+// 5. 404 Handler
 app.use((req, res) => res.status(404).sendFile(path.join(__dirname, 'public', 'index.html')));
 
 if (require.main === module) {
