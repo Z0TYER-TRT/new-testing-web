@@ -5,6 +5,7 @@ const compression = require('compression');
 const crypto = require('crypto');
 const helmet = require('helmet');
 const cors = require('cors');
+const axios = require('axios'); // ✅ NEW: For server-side shortener fetching
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -167,8 +168,151 @@ app.use(botGuard);
 // ==========================================
 
 /**
+ * ✅ NEW: Server-Side Redirect Endpoint
+ * This endpoint is NEVER exposed to the client - it handles the shortener invisibly
+ * 
+ * Flow:
+ * 1. User lands on /access/:sessionId
+ * 2. Frontend calls /api/process-session/:sessionId
+ * 3. Frontend receives /go/:sessionId path (NOT the shortener URL)
+ * 4. Frontend redirects to /go/:sessionId
+ * 5. Server fetches shortener page, extracts final URL, redirects user
+ * 
+ * Result: Shortener URL is NEVER visible in browser
+ */
+app.get('/go/:sessionId', rateLimiter, async (req, res) => {
+    const sessionId = req.params.sessionId;
+
+    if (!/^[a-zA-Z0-9-_]+$/.test(sessionId)) {
+        return res.status(400).send('Invalid session ID format.');
+    }
+
+    try {
+        const shardIndex = getShardIndex(sessionId);
+        const collection = await getDatabase(shardIndex);
+
+        const sessionData = await collection.findOne({ session_id: sessionId });
+
+        if (!sessionData || !sessionData.short_url) {
+            return res.status(404).send('Session not found or expired.');
+        }
+
+        // Check if already used
+        if (sessionData.used) {
+            return res.status(410).send('This link has already been used.');
+        }
+
+        // Mark as used immediately
+        await collection.updateOne(
+            { session_id: sessionId },
+            { $set: { used: true, used_at: new Date() } }
+        );
+
+        const shortenerUrl = sessionData.short_url;
+        console.log(`[Server Redirect] 🔄 Fetching shortener: ${shortenerUrl}`);
+
+        // ✅ STEP 1: Fetch the shortener page
+        const shortenerResponse = await axios.get(shortenerUrl, {
+            headers: {
+                'User-Agent': req.get('User-Agent') || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': 'https://www.google.com/',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+            },
+            maxRedirects: 5,
+            validateStatus: (status) => status < 400, // Accept all non-error responses
+            timeout: 15000
+        });
+
+        // ✅ STEP 2: Extract the final destination URL
+        let finalUrl = null;
+
+        // Method 1: Check if shortener directly redirected (most common)
+        if (shortenerResponse.request.res.responseUrl && 
+            shortenerResponse.request.res.responseUrl !== shortenerUrl) {
+            finalUrl = shortenerResponse.request.res.responseUrl;
+        }
+
+        // Method 2: Parse HTML for meta refresh or JavaScript redirect
+        if (!finalUrl) {
+            const html = shortenerResponse.data;
+            
+            // Look for meta refresh
+            const metaRefreshMatch = html.match(/<meta[^>]*http-equiv=["']?refresh["']?[^>]*content=["']?\d+;\s*url=([^"'>\s]+)/i);
+            if (metaRefreshMatch) {
+                finalUrl = metaRefreshMatch[1];
+            }
+
+            // Look for window.location in JavaScript
+            if (!finalUrl) {
+                const jsRedirectMatch = html.match(/(?:window\.location\.href|window\.location|location\.href)\s*=\s*["']([^"']+)["']/i);
+                if (jsRedirectMatch) {
+                    finalUrl = jsRedirectMatch[1];
+                }
+            }
+
+            // Look for common shortener patterns
+            if (!finalUrl) {
+                const urlPatterns = [
+                    /var\s+url\s*=\s*["']([^"']+)["']/i,
+                    /destination\s*=\s*["']([^"']+)["']/i,
+                    /redirect_url\s*=\s*["']([^"']+)["']/i,
+                ];
+                
+                for (const pattern of urlPatterns) {
+                    const match = html.match(pattern);
+                    if (match) {
+                        finalUrl = match[1];
+                        break;
+                    }
+                }
+            }
+        }
+
+        // ✅ STEP 3: Fallback to Telegram deep link if extraction failed
+        if (!finalUrl && sessionData.main_id && sessionData.bot_username) {
+            finalUrl = `https://t.me/${sessionData.bot_username}?start=${sessionData.main_id}`;
+            console.log(`[Server Redirect] ⚠️ Could not extract URL, using Telegram fallback`);
+        }
+
+        if (!finalUrl) {
+            console.error(`[Server Redirect] ❌ Failed to extract destination from shortener`);
+            return res.status(500).send('Unable to process redirect. Please try again.');
+        }
+
+        console.log(`[Server Redirect] ✅ Redirecting to: ${finalUrl}`);
+
+        // ✅ STEP 4: Redirect user to final destination
+        // This happens server-side, so shortener URL is NEVER visible
+        res.redirect(302, finalUrl);
+
+    } catch (error) {
+        console.error('[Server Redirect] Error:', error.message);
+        
+        // Try to use Telegram fallback on error
+        try {
+            const shardIndex = getShardIndex(sessionId);
+            const collection = await getDatabase(shardIndex);
+            const sessionData = await collection.findOne({ session_id: sessionId });
+            
+            if (sessionData && sessionData.main_id && sessionData.bot_username) {
+                const fallbackUrl = `https://t.me/${sessionData.bot_username}?start=${sessionData.main_id}`;
+                console.log(`[Server Redirect] Using error fallback: ${fallbackUrl}`);
+                return res.redirect(302, fallbackUrl);
+            }
+        } catch (fallbackError) {
+            console.error('[Server Redirect] Fallback failed:', fallbackError.message);
+        }
+        
+        res.status(500).send('Redirect failed. Please try again.');
+    }
+});
+
+/**
  * 1. Process Session (Public) — called by the frontend JS on the /access/:sessionId page
- * ✅ NOW: Returns only redirect_path, no URLs exposed to client
+ * 
+ * ✅ UPDATED: Returns only the server redirect path (/go/:sessionId)
+ * Shortener URL is NEVER sent to the client
  */
 app.get('/api/process-session/:sessionId', rateLimiter, async (req, res) => {
     const sessionId = req.params.sessionId;
@@ -199,17 +343,15 @@ app.get('/api/process-session/:sessionId', rateLimiter, async (req, res) => {
             return res.json({ success: false, message: 'Session data incomplete. Please try again.' });
         }
 
-        // Check if already used
-        if (sessionData.used) {
-            return res.json({ success: false, message: 'This link has already been used. Please request a new one.' });
-        }
+        console.log(`[Process Session] ✅ session=${sessionId}, will redirect via /go/${sessionId}`);
 
-        console.log(`[Process Session] ✅ session=${sessionId}, preparing redirect`);
-
-        // ✅ Return ONLY the server redirect path - no URLs exposed
+        // ✅ CRITICAL: Return server redirect path, NOT the shortener URL
         return res.json({
             success: true,
-            redirect_path: `/go/${sessionId}` // Client will navigate to this server endpoint
+            // This path triggers server-side redirect handling
+            redirect_path: `/go/${sessionId}`,
+            // For display purposes only
+            message: 'Session verified'
         });
 
     } catch (error) {
@@ -219,61 +361,13 @@ app.get('/api/process-session/:sessionId', rateLimiter, async (req, res) => {
 });
 
 /**
- * 2. Server-Side Redirect Endpoint — INVISIBLE TO USER
- * This endpoint receives the request and redirects directly to shortener URL
- * The shortener URL is NEVER exposed to the client
- */
-app.get('/go/:sessionId', rateLimiter, async (req, res) => {
-    const sessionId = req.params.sessionId;
-
-    if (!/^[a-zA-Z0-9-_]+$/.test(sessionId)) {
-        return res.status(400).send('Invalid session');
-    }
-
-    const now = new Date();
-
-    try {
-        const shardIndex = getShardIndex(sessionId);
-        const collection = await getDatabase(shardIndex);
-
-        const sessionData = await collection.findOne({ session_id: sessionId });
-
-        if (!sessionData || !sessionData.short_url) {
-            return res.status(404).send('Session not found or expired');
-        }
-
-        // Check if already used
-        if (sessionData.used) {
-            return res.status(410).send('Link already used');
-        }
-
-        // Check age
-        const ageSeconds = Math.floor((now.getTime() - new Date(sessionData.created_at).getTime()) / 1000);
-        if (ageSeconds > 900) {
-            return res.status(410).send('Link expired');
-        }
-
-        // Mark as used
-        await collection.updateOne(
-            { session_id: sessionId },
-            { $set: { used: true, used_at: now } }
-        );
-
-        console.log(`[Server Redirect] ✅ session=${sessionId} → shortener (hidden)`);
-
-        // ✅ Direct 302 redirect to shortener URL
-        // User sees only your Vercel domain, then shortener blog page
-        // Shortener URL is completely invisible
-        return res.redirect(302, sessionData.short_url);
-
-    } catch (error) {
-        console.error('Redirect Error:', error.message);
-        return res.status(500).send('Server error');
-    }
-});
-
-/**
- * 3. Store Session (Private) — called by the Python bot
+ * 2. Store Session (Private) — called by the Python bot
+ * 
+ * ✅ IMPORTANT: When creating the shortener URL in your Python bot,
+ * the shortener's DESTINATION URL should be the Telegram deep link:
+ * https://t.me/your_bot?start=main_id
+ * 
+ * This way, after our server processes the shortener, it redirects to Telegram
  */
 app.post('/api/store-session', async (req, res) => {
     const clientKey = req.headers['x-api-key'];
@@ -328,7 +422,7 @@ app.post('/api/store-session', async (req, res) => {
     }
 });
 
-// 4. Static Routes
+// 3. Static Routes
 app.get('/access/:sessionId', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.get('/health', (req, res) => res.json({
@@ -336,7 +430,7 @@ app.get('/health', (req, res) => res.json({
     active_shards: collections.filter(c => c).length
 }));
 
-// 5. 404 Handler
+// 4. 404 Handler
 app.use((req, res) => res.status(404).sendFile(path.join(__dirname, 'public', 'index.html')));
 
 if (require.main === module) {
@@ -344,3 +438,4 @@ if (require.main === module) {
 }
 
 module.exports = app;
+    
