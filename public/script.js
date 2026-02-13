@@ -52,7 +52,7 @@
         statusMessage = document.getElementById('status-message');
     }
     
-    let verificationStarted = false; // Fixed variable name (was True which is invalid JS)
+    let verificationStarted = false;
     
     // Function to show different icons
     function showLoader() {
@@ -73,12 +73,21 @@
         if (crossMark) crossMark.style.display = 'block';
     }
     
+    // ✅ NEW: Detect if user is in Telegram WebView
+    function isTelegramBrowser() {
+        const userAgent = navigator.userAgent || navigator.vendor || window.opera;
+        // Telegram's in-app browser includes "Telegram" in user agent
+        return /Telegram/i.test(userAgent);
+    }
+    
     // Core Verification Function
     async function processVerificationAndRedirect(sessionId) {
         if (verificationStarted) return; 
         verificationStarted = true;
         
         console.log('=== PROCESSING SERVER VERIFICATION ===');
+        console.log('User Agent:', navigator.userAgent);
+        console.log('Is Telegram Browser:', isTelegramBrowser());
         
         try {
             // Update UI to show we are now contacting server
@@ -94,17 +103,36 @@
             if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
             
             const data = await response.json();
+            console.log('Server response:', data);
             
             if (data.success && data.redirect_url) {
                 // Success State
                 showCheckMark();
                 if (title) title.textContent = '✅ Access Granted';
-                if (message) message.textContent = 'Redirecting you now...';
                 if (statusMessage) statusMessage.innerHTML = '<span class="success">Success!</span>';
+                
+                // ✅ NEW: Determine redirect URL based on browser type
+                let finalRedirectUrl = data.redirect_url;
+                let redirectMessage = 'Redirecting you now...';
+                
+                // If user is in Telegram browser and we have telegram_return_url, use that
+                if (isTelegramBrowser() && data.telegram_return_url) {
+                    console.log('✅ Telegram browser detected - using telegram_return_url');
+                    finalRedirectUrl = data.telegram_return_url;
+                    redirectMessage = 'Returning to Telegram bot...';
+                } else if (isTelegramBrowser()) {
+                    console.log('⚠️ Telegram browser detected but no telegram_return_url available');
+                    // Fallback: still use redirect_url (shortener link)
+                } else {
+                    console.log('🌐 Regular browser - using redirect_url (shortener)');
+                }
+                
+                if (message) message.textContent = redirectMessage;
+                console.log('Final redirect URL:', finalRedirectUrl);
                 
                 // Final redirect
                 setTimeout(() => {
-                    window.location.href = data.redirect_url;
+                    window.location.href = finalRedirectUrl;
                 }, 1000); // 1 second delay to see the checkmark
             } else {
                 // Server returned logical error (e.g. expired)
