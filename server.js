@@ -95,8 +95,10 @@ async function getDatabase(index) {
 
             clients[index] = client;
             collections[index] = col;
+            console.log(`✅ Shard #${index + 1} Connected`);
             return col;
         } catch (error) {
+            console.error(`❌ Shard #${index + 1} Failed:`, error.message);
             connectionPromises[index] = null;
             throw error;
         }
@@ -121,11 +123,17 @@ setInterval(cleanupOldSessions, 5 * 60 * 1000);
 DB_SHARDS.forEach((_, i) => getDatabase(i).catch(() => {}));
 
 app.use(compression());
-app.use(express.static(path.join(__dirname, 'public'), { maxAge: '1h' }));
 app.use(express.json({ limit: '50kb' }));
 app.use(express.urlencoded({ extended: true, limit: '50kb' }));
 
-// ✅ NEW: Server-side redirect endpoint - BEFORE botGuard so it's not blocked
+// ==========================================
+// ⚡ CRITICAL: DEFINE PUBLIC ENDPOINTS BEFORE botGuard
+// ==========================================
+
+// Static files (public directory)
+app.use(express.static(path.join(__dirname, 'public'), { maxAge: '1h' }));
+
+// ✅ Server-side redirect endpoint - MUST be BEFORE botGuard
 app.get('/go/:sessionId', rateLimiter, async (req, res) => {
     const sessionId = req.params.sessionId;
 
@@ -139,12 +147,14 @@ app.get('/go/:sessionId', rateLimiter, async (req, res) => {
         const sessionData = await collection.findOne({ session_id: sessionId });
 
         if (!sessionData || !sessionData.short_url) {
-            return res.status(404).send('<h1>Link Not Found</h1>');
+            console.log(`[/go] Session not found: ${sessionId}`);
+            return res.status(404).send('<h1>Link Not Found</h1><p>Please try clicking the download button again.</p>');
         }
 
         const ageSeconds = Math.floor((Date.now() - new Date(sessionData.created_at).getTime()) / 1000);
         if (ageSeconds > 900) {
-            return res.status(410).send('<h1>Link Expired</h1>');
+            console.log(`[/go] Session expired: ${sessionId}`);
+            return res.status(410).send('<h1>Link Expired</h1><p>Please request a new link from the bot.</p>');
         }
 
         // Mark as used
@@ -153,22 +163,22 @@ app.get('/go/:sessionId', rateLimiter, async (req, res) => {
             { $set: { used: true, used_at: new Date() } }
         );
 
-        console.log(`[Server Redirect] ✅ ${sessionId} → ${sessionData.short_url}`);
+        console.log(`[/go] ✅ Redirecting ${sessionId} → ${sessionData.short_url}`);
 
-        // ✅ SERVER-SIDE REDIRECT - Shortener URL never appears in browser
+        // ✅ SERVER-SIDE REDIRECT
         return res.redirect(302, sessionData.short_url);
 
     } catch (error) {
-        console.error('[Server Redirect] Error:', error.message);
-        return res.status(500).send('<h1>Server Error</h1>');
+        console.error('[/go] Error:', error.message);
+        return res.status(500).send('<h1>Server Error</h1><p>Please try again.</p>');
     }
 });
 
-app.use(botGuard);
-
-// Validate session API
+// ✅ API endpoint to validate session - MUST be BEFORE botGuard
 app.get('/api/process-session/:sessionId', rateLimiter, async (req, res) => {
     const sessionId = req.params.sessionId;
+
+    console.log(`[API] Processing session: ${sessionId}`);
 
     if (!/^[a-zA-Z0-9-_]+$/.test(sessionId)) {
         return res.json({ success: false, message: 'Invalid session ID.' });
@@ -180,37 +190,55 @@ app.get('/api/process-session/:sessionId', rateLimiter, async (req, res) => {
         const sessionData = await collection.findOne({ session_id: sessionId });
 
         if (!sessionData) {
-            return res.json({ success: false, message: 'Session not found.' });
+            console.log(`[API] Session not found: ${sessionId}`);
+            return res.json({ success: false, message: 'Session not found. Please try again.' });
         }
 
         const ageSeconds = Math.floor((Date.now() - new Date(sessionData.created_at).getTime()) / 1000);
         if (ageSeconds > 900) {
+            console.log(`[API] Session expired: ${sessionId}`);
             return res.json({ success: false, message: 'Link expired.' });
         }
 
         if (!sessionData.short_url) {
+            console.log(`[API] Session incomplete: ${sessionId}`);
             return res.json({ success: false, message: 'Session incomplete.' });
         }
 
-        // ✅ Return success with redirect path (not the actual shortener URL)
+        console.log(`[API] ✅ Session valid: ${sessionId}`);
+
+        // ✅ Return success with redirect path
         return res.json({
             success: true,
-            redirect_path: `/go/${sessionId}` // User navigates here for server redirect
+            redirect_path: `/go/${sessionId}`
         });
 
     } catch (error) {
+        console.error('[API] Error:', error.message);
         return res.json({ success: false, message: 'Server error.' });
     }
 });
 
-// Store session
+// ==========================================
+// 🛡️ NOW APPLY botGuard TO ALL OTHER ROUTES
+// ==========================================
+app.use(botGuard);
+
+// ==========================================
+// ⚡ PROTECTED ENDPOINTS (AFTER botGuard)
+// ==========================================
+
+// Store session endpoint (protected by API key)
 app.post('/api/store-session', async (req, res) => {
     const clientKey = req.headers['x-api-key'];
     if (clientKey !== API_SECRET_KEY) {
+        console.log('[Store] ❌ Invalid API key');
         return res.status(403).json({ success: false, message: 'Access Denied' });
     }
 
     const { session_id, short_url, user_id, main_id, bot_username } = req.body;
+
+    console.log(`[Store] Received: session=${session_id}, main_id=${main_id}, bot=${bot_username}`);
 
     if (!session_id || !short_url) {
         return res.status(400).json({ success: false, message: 'Missing fields' });
@@ -240,20 +268,25 @@ app.post('/api/store-session', async (req, res) => {
             { upsert: true }
         );
 
+        console.log(`[Store] ✅ Stored session=${session_id}`);
         return res.json({ success: true });
 
     } catch (error) {
+        console.error('[Store] Error:', error.message);
         return res.status(500).json({ success: false });
     }
 });
 
+// Static routes
 app.get('/access/:sessionId', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.get('/health', (req, res) => res.json({ status: 'OK', shards: collections.filter(c => c).length }));
+
+// 404 Handler
 app.use((req, res) => res.status(404).sendFile(path.join(__dirname, 'public', 'index.html')));
 
 if (require.main === module) {
-    app.listen(PORT, () => console.log(`🚀 Server on port ${PORT}`));
+    app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
 }
 
 module.exports = app;
