@@ -169,15 +169,9 @@ app.use(botGuard);
 /**
  * 1. Process Session (Public) — called by the frontend JS on the /access/:sessionId page
  *
- * ✅ FIX: The flow is now:
- *   User clicks Download → /access/SESSION_ID page loads
- *   → Frontend calls this endpoint → gets back { short_url, telegram_url }
- *   → Frontend redirects user to short_url (the shortener)
- *   → Shortener completes → user lands on telegram_url = t.me/bot?start=main_id
- *   → Bot receives /start main_id → delivers file directly ✅
- *
- * Previously the session only stored short_url and NOT main_id/bot_username,
- * so after the shortener completed there was no way back to the file.
+ * ✅ UPDATED: Returns both shortener URL and Telegram deep link
+ * Frontend will always use shortener URL, but we provide telegram_return_url
+ * for reference (in case shortener needs to know where to redirect after)
  */
 app.get('/api/process-session/:sessionId', rateLimiter, async (req, res) => {
     const sessionId = req.params.sessionId;
@@ -192,8 +186,6 @@ app.get('/api/process-session/:sessionId', rateLimiter, async (req, res) => {
         const shardIndex = getShardIndex(sessionId);
         const collection = await getDatabase(shardIndex);
 
-        // ✅ FIX: Do NOT mark as used yet — mark used only after redirect is confirmed
-        // This prevents the "link already used" problem when user retries
         const sessionData = await collection.findOne({ session_id: sessionId });
 
         if (!sessionData) {
@@ -210,8 +202,7 @@ app.get('/api/process-session/:sessionId', rateLimiter, async (req, res) => {
             return res.json({ success: false, message: 'Session data incomplete. Please try again.' });
         }
 
-        // ✅ FIX: Build the Telegram deep link using stored main_id + bot_username
-        // This is what the user lands on AFTER completing the shortener
+        // ✅ Build the Telegram deep link using stored main_id + bot_username
         let telegram_return_url = null;
         if (sessionData.main_id && sessionData.bot_username) {
             telegram_return_url = `https://t.me/${sessionData.bot_username}?start=${sessionData.main_id}`;
@@ -227,15 +218,15 @@ app.get('/api/process-session/:sessionId', rateLimiter, async (req, res) => {
 
         return res.json({
             success: true,
-            // The shortener URL (user goes here first to complete the shortener)
+            // The shortener URL - THIS is what frontend redirects to
             short_url: sessionData.short_url,
-            // ✅ The Telegram deep link (shortener should redirect here after completion)
-            // Your frontend should pass this as the "return URL" to the shortener
+            // The Telegram deep link (for reference/future use)
             telegram_return_url: telegram_return_url,
-            // Combined: redirect to shortener, which redirects to telegram_return_url
-            // If your shortener supports a custom return URL param, use that.
-            // Otherwise redirect_url = short_url (shortener already has telegram link baked in)
-            redirect_url: sessionData.short_url
+            // Main redirect URL - ALWAYS the shortener
+            redirect_url: sessionData.short_url,
+            // Send back bot info in case frontend needs it
+            main_id: sessionData.main_id,
+            bot_username: sessionData.bot_username
         });
 
     } catch (error) {
@@ -247,8 +238,11 @@ app.get('/api/process-session/:sessionId', rateLimiter, async (req, res) => {
 /**
  * 2. Store Session (Private) — called by the Python bot
  *
- * ✅ FIX: Now accepts and stores main_id + bot_username
- * These are needed by process-session to build the Telegram return URL
+ * ✅ IMPORTANT: When creating the shortener URL in your Python bot,
+ * make sure the shortener's DESTINATION URL is the Telegram deep link:
+ * https://t.me/your_bot?start=main_id
+ * 
+ * That way, after shortener completes, it automatically returns to Telegram
  */
 app.post('/api/store-session', async (req, res) => {
     const clientKey = req.headers['x-api-key'];
@@ -270,7 +264,6 @@ app.post('/api/store-session', async (req, res) => {
         return res.status(400).json({ success: false, message: 'Invalid URL format for short_url' });
     }
 
-    // ✅ Validate main_id if provided
     if (main_id && !/^[a-zA-Z0-9_-]+$/.test(main_id)) {
         return res.status(400).json({ success: false, message: 'Invalid main_id format' });
     }
@@ -286,7 +279,6 @@ app.post('/api/store-session', async (req, res) => {
                     session_id,
                     short_url,
                     user_id,
-                    // ✅ Store these so process-session can build the Telegram return URL
                     main_id: main_id || null,
                     bot_username: bot_username || null,
                     created_at: new Date(),
