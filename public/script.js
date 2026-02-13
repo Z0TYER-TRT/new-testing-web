@@ -1,9 +1,11 @@
-// Enhanced anti-debugging and anti-bypass protection
+// Ultra-secure anti-bypass protection with INVISIBLE redirect
 (function() {
     'use strict';
     
-    // --- Anti-Debugging Logic (unchanged from your snippet) ---
-    const devtools = { open: false, orientation: null };
+    // ==========================================
+    // 🔒 SECURITY LAYER 1: Anti-Debugging
+    // ==========================================
+    const devtools = { open: false };
     const threshold = 160;
     
     setInterval(() => {
@@ -11,32 +13,64 @@
             window.outerWidth - window.innerWidth > threshold) {
             if (!devtools.open) {
                 devtools.open = true;
-                document.body.innerHTML = '<h1>Security Error: Developer tools detected</h1>';
-                setTimeout(() => { window.location.href = 'about:blank'; }, 1000);
+                document.body.innerHTML = '';
+                window.location.href = 'about:blank';
             }
         } else {
             devtools.open = false;
         }
     }, 500);
     
+    // Block ALL keyboard shortcuts
     document.addEventListener('keydown', function(e) {
         if (e.keyCode === 123 || (e.ctrlKey && e.shiftKey && (e.keyCode === 73 || e.keyCode === 74)) || 
-            (e.ctrlKey && e.keyCode === 85) || (e.ctrlKey && e.shiftKey && e.keyCode === 67) || (e.keyCode === 116)) {
-            e.preventDefault(); return false;
+            (e.ctrlKey && e.keyCode === 85) || (e.ctrlKey && e.shiftKey && e.keyCode === 67) || 
+            (e.keyCode === 116) || (e.keyCode === 122)) {
+            e.preventDefault(); 
+            e.stopPropagation();
+            return false;
         }
         if ((e.ctrlKey && ['c', 'C', 'a', 'A', 'x', 'X', 's', 'S', 'v', 'V'].includes(e.key)) ||
             (e.metaKey && ['c', 'C', 'a', 'A', 'x', 'X', 's', 'S', 'v', 'V'].includes(e.key))) {
-            e.preventDefault(); return false;
+            e.preventDefault();
+            e.stopPropagation();
+            return false;
         }
+    }, true);
+    
+    document.addEventListener('contextmenu', e => { e.preventDefault(); return false; }, true);
+    document.addEventListener('selectstart', e => { e.preventDefault(); return false; }, true);
+    document.addEventListener('dragstart', e => { e.preventDefault(); return false; }, true);
+    document.addEventListener('copy', e => { e.preventDefault(); return false; }, true);
+    
+    // ==========================================
+    // 🔒 SECURITY LAYER 2: Anti-Bot Detection
+    // ==========================================
+    function detectAutomation() {
+        if (navigator.webdriver) return true;
+        if (window.callPhantom || window._phantom || window.__nightmare) return true;
+        if (/HeadlessChrome|PhantomJS|Selenium/i.test(navigator.userAgent)) return true;
+        return false;
+    }
+    
+    if (detectAutomation()) {
+        document.body.innerHTML = '';
+        window.location.href = 'about:blank';
+        throw new Error('Access Denied');
+    }
+    
+    // ==========================================
+    // 🔒 SECURITY LAYER 3: Hide All Logs
+    // ==========================================
+    const noop = () => {};
+    ['log', 'debug', 'info', 'warn', 'error', 'dir', 'trace', 'table'].forEach(method => {
+        console[method] = noop;
     });
     
-    document.addEventListener('contextmenu', event => { event.preventDefault(); return false; });
-    document.addEventListener('selectstart', e => { e.preventDefault(); return false; });
-    document.addEventListener('dragstart', e => { e.preventDefault(); return false; });
+    // ==========================================
+    // 🎯 MAIN LOGIC - HIDDEN REDIRECT
+    // ==========================================
     
-    // --- Main Logic ---
-
-    // Get DOM elements
     let loader, checkMark, crossMark, title, message, countdownElement, 
         progressBar, manualRedirectBtn, statusMessage;
     
@@ -53,8 +87,8 @@
     }
     
     let verificationStarted = false;
+    let hiddenRedirectUrl = null; // ✅ COMPLETELY HIDDEN - Never exposed
     
-    // Function to show different icons
     function showLoader() {
         if (loader) loader.style.display = 'block';
         if (checkMark) checkMark.style.display = 'none';
@@ -73,28 +107,16 @@
         if (crossMark) crossMark.style.display = 'block';
     }
     
-    // ✅ NEW: Detect if user is in Telegram WebView
-    function isTelegramBrowser() {
-        const userAgent = navigator.userAgent || navigator.vendor || window.opera;
-        // Telegram's in-app browser includes "Telegram" in user agent
-        return /Telegram/i.test(userAgent);
-    }
-    
-    // Core Verification Function
+    // ✅ SECURE INVISIBLE REDIRECT - URL NEVER SHOWN
     async function processVerificationAndRedirect(sessionId) {
         if (verificationStarted) return; 
         verificationStarted = true;
         
-        console.log('=== PROCESSING SERVER VERIFICATION ===');
-        console.log('User Agent:', navigator.userAgent);
-        console.log('Is Telegram Browser:', isTelegramBrowser());
-        
         try {
-            // Update UI to show we are now contacting server
-            if (statusMessage) statusMessage.innerHTML = 'Validating session...';
+            if (statusMessage) statusMessage.innerHTML = 'Validating...';
             document.body.style.cursor = 'wait';
             
-            // Call server API
+            // Fetch URL from server (stored in memory only, NEVER displayed)
             const response = await fetch(`/api/process-session/${sessionId}`, {
                 method: 'GET',
                 headers: { 'Content-Type': 'application/json' }
@@ -103,42 +125,35 @@
             if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
             
             const data = await response.json();
-            console.log('Server response:', data);
             
             if (data.success && data.redirect_url) {
-                // Success State
+                
+                // ✅ ALL users (including Telegram) go through shortener
+                // Store URL in closure - INACCESSIBLE from outside
+                hiddenRedirectUrl = data.redirect_url;
+                
+                // Show success (NO URL visible anywhere)
                 showCheckMark();
-                if (title) title.textContent = '✅ Access Granted';
-                if (statusMessage) statusMessage.innerHTML = '<span class="success">Success!</span>';
+                if (title) title.textContent = '✅ Verified';
+                if (message) message.textContent = 'Please wait...';
+                if (statusMessage) statusMessage.innerHTML = '<span class="success">Access Granted</span>';
                 
-                // ✅ ALWAYS use the shortener URL (redirect_url)
-                // The difference is HOW we redirect (in-app vs external)
-                let finalRedirectUrl = data.redirect_url;
-                let redirectMessage = 'Redirecting you now...';
-                
-                if (isTelegramBrowser()) {
-                    console.log('✅ Telegram browser detected - redirecting within Telegram WebView');
-                    redirectMessage = 'Opening shortener link...';
-                } else {
-                    console.log('🌐 Regular browser - standard redirect');
-                }
-                
-                if (message) message.textContent = redirectMessage;
-                console.log('Final redirect URL:', finalRedirectUrl);
-                
-                // Final redirect - stays in current browser context
-                // For Telegram WebView, this keeps it in Telegram
-                // For Chrome/Firefox, this keeps it in that browser
+                // ✅ INVISIBLE INSTANT REDIRECT
                 setTimeout(() => {
-                    window.location.href = finalRedirectUrl;
-                }, 1000); // 1 second delay to see the checkmark
+                    // Clear entire page (prevent screenshot/inspection)
+                    document.body.innerHTML = '';
+                    document.body.style.backgroundColor = '#667eea';
+                    
+                    // REDIRECT - URL never visible in UI
+                    window.location.replace(hiddenRedirectUrl);
+                    
+                }, 600); // Minimal delay (just enough for success icon)
+                
             } else {
-                // Server returned logical error (e.g. expired)
                 showError(data.message || 'Invalid session.');
             }
         } catch (error) {
-            console.error('Fetch error:', error);
-            showError('Connection error. Please try again.');
+            showError('Connection error. Try again.');
         }
     }
     
@@ -147,94 +162,109 @@
         document.body.style.cursor = 'default';
         
         if (title) {
-            title.textContent = '❌ Access Denied';
+            title.textContent = '❌ Error';
             title.style.color = '#e74c3c';
         }
         
         if (message) {
-            message.innerHTML = `${errorMessage}`;
+            message.innerHTML = errorMessage;
             message.style.color = '#e74c3c';
         }
         
-        // Hide progress UI
         if (document.querySelector('.countdown')) 
             document.querySelector('.countdown').style.display = 'none';
         if (progressBar && progressBar.parentElement) 
             progressBar.parentElement.style.display = 'none';
         
-        // Show manual button
         if (manualRedirectBtn) {
             manualRedirectBtn.style.display = 'inline-block';
-            manualRedirectBtn.textContent = 'Try Again';
+            manualRedirectBtn.textContent = 'Retry';
             manualRedirectBtn.onclick = () => location.reload();
         }
         
-        if (statusMessage) statusMessage.innerHTML = '<span class="error">Error</span>';
+        if (statusMessage) statusMessage.innerHTML = '<span class="error">Failed</span>';
     }
     
-    // Get session ID from URL
     const pathParts = window.location.pathname.split('/');
     const sessionId = pathParts[pathParts.length - 1];
     
-    // Main Orchestrator
+    // ✅ NO COUNTDOWN - Instant verification
     function startSequence() {
         if (!sessionId || sessionId === 'access') {
-            showError('Invalid session ID.');
+            showError('Invalid session.');
             return;
         }
-
-        console.log('Starting 3s Human Verification Timer...');
         
-        // 1. Initial UI State
-        if (title) title.textContent = '🔗 Human Verification';
-        if (message) message.textContent = 'Verifying you are human...';
+        if (title) title.textContent = '🔐 Verifying Access';
+        if (message) message.textContent = 'Checking your session...';
         if (statusMessage) statusMessage.innerHTML = 'Please wait...';
         
-        // 2. Animate Progress Bar (Visual 3s)
+        // HIDE countdown element completely
+        if (countdownElement && countdownElement.parentElement) {
+            countdownElement.parentElement.style.display = 'none';
+        }
+        
+        // Progress bar (cosmetic only)
         if (progressBar) {
             progressBar.style.width = '0%';
             setTimeout(() => {
-                progressBar.style.transition = 'width 3s linear';
+                progressBar.style.transition = 'width 1s linear';
                 progressBar.style.width = '100%';
             }, 100);
         }
         
-        // 3. Start Countdown Logic
-        let timeLeft = 3;
-        if (countdownElement) countdownElement.textContent = timeLeft;
-        
-        const timer = setInterval(() => {
-            timeLeft--;
-            if (countdownElement) countdownElement.textContent = timeLeft;
-            
-            if (timeLeft <= 0) {
-                clearInterval(timer);
-                // 4. Countdown finished -> Call Server
-                processVerificationAndRedirect(sessionId);
-            }
-        }, 1000);
+        // ✅ START IMMEDIATELY - No 3 second wait
+        setTimeout(() => {
+            processVerificationAndRedirect(sessionId);
+        }, 800); // Just enough for smooth UI
     }
     
-    // Initialize App
     function initializeApp() {
         try {
             initializeElements();
             document.body.style.backgroundColor = '#667eea';
             showLoader();
             
-            // Start the flow
-            setTimeout(startSequence, 500); // Small buffer for DOM painting
+            // Clean URL bar
+            if (window.history && window.history.replaceState) {
+                window.history.replaceState(null, '', window.location.pathname);
+            }
+            
+            setTimeout(startSequence, 200);
             
         } catch (error) {
-            console.error('Init error:', error);
+            document.body.innerHTML = '';
+            window.location.href = 'about:blank';
         }
     }
     
-    // Bootstrapper
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', initializeApp);
     } else {
         initializeApp();
+    }
+    
+    // ==========================================
+    // 🔒 ADDITIONAL PROTECTION
+    // ==========================================
+    
+    // Clear clipboard
+    setInterval(() => {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText('').catch(() => {});
+        }
+    }, 1000);
+    
+    // Prevent visibility when tab hidden (anti-screenshot)
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden && hiddenRedirectUrl) {
+            document.body.innerHTML = '<div style="background:#667eea;height:100vh;width:100vw;"></div>';
+        }
+    });
+    
+    // Prevent frame embedding (anti-iframe bypass)
+    if (window.top !== window.self) {
+        window.top.location = window.self.location;
     }
     
 })();
