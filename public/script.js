@@ -1,16 +1,11 @@
-// Ultra-secure anti-bypass protection with INVISIBLE redirect
+// Ultra-secure invisible redirect - URL handled by server
 (function() {
     'use strict';
     
-    // ==========================================
-    // 🔒 SECURITY LAYER 1: Anti-Debugging
-    // ==========================================
+    // Anti-debugging
     const devtools = { open: false };
-    const threshold = 160;
-    
     setInterval(() => {
-        if (window.outerHeight - window.innerHeight > threshold || 
-            window.outerWidth - window.innerWidth > threshold) {
+        if (window.outerHeight - window.innerHeight > 160 || window.outerWidth - window.innerWidth > 160) {
             if (!devtools.open) {
                 devtools.open = true;
                 document.body.innerHTML = '';
@@ -21,73 +16,53 @@
         }
     }, 500);
     
-    // Block ALL keyboard shortcuts
+    // Block keyboard
     document.addEventListener('keydown', function(e) {
         if (e.keyCode === 123 || (e.ctrlKey && e.shiftKey && (e.keyCode === 73 || e.keyCode === 74)) || 
             (e.ctrlKey && e.keyCode === 85) || (e.ctrlKey && e.shiftKey && e.keyCode === 67) || 
-            (e.keyCode === 116) || (e.keyCode === 122)) {
+            (e.keyCode === 116)) {
             e.preventDefault(); 
-            e.stopPropagation();
             return false;
         }
         if ((e.ctrlKey && ['c', 'C', 'a', 'A', 'x', 'X', 's', 'S', 'v', 'V'].includes(e.key)) ||
             (e.metaKey && ['c', 'C', 'a', 'A', 'x', 'X', 's', 'S', 'v', 'V'].includes(e.key))) {
             e.preventDefault();
-            e.stopPropagation();
             return false;
         }
     }, true);
     
     document.addEventListener('contextmenu', e => { e.preventDefault(); return false; }, true);
     document.addEventListener('selectstart', e => { e.preventDefault(); return false; }, true);
-    document.addEventListener('dragstart', e => { e.preventDefault(); return false; }, true);
     document.addEventListener('copy', e => { e.preventDefault(); return false; }, true);
     
-    // ==========================================
-    // 🔒 SECURITY LAYER 2: Anti-Bot Detection
-    // ==========================================
-    function detectAutomation() {
-        if (navigator.webdriver) return true;
-        if (window.callPhantom || window._phantom || window.__nightmare) return true;
-        if (/HeadlessChrome|PhantomJS|Selenium/i.test(navigator.userAgent)) return true;
-        return false;
-    }
-    
-    if (detectAutomation()) {
+    // Detect automation
+    if (navigator.webdriver || window.callPhantom || window._phantom || window.__nightmare) {
         document.body.innerHTML = '';
         window.location.href = 'about:blank';
         throw new Error('Access Denied');
     }
     
-    // ==========================================
-    // 🔒 SECURITY LAYER 3: Hide All Logs
-    // ==========================================
+    // Disable console
     const noop = () => {};
-    ['log', 'debug', 'info', 'warn', 'error', 'dir', 'trace', 'table'].forEach(method => {
-        console[method] = noop;
-    });
+    ['log', 'debug', 'info', 'warn', 'error'].forEach(m => { console[m] = noop; });
     
-    // ==========================================
-    // 🎯 MAIN LOGIC - HIDDEN REDIRECT
-    // ==========================================
+    // DOM elements
+    let loader, checkMark, crossMark, title, message, statusMessage, progressBar;
     
-    let loader, checkMark, crossMark, title, message, countdownElement, 
-        progressBar, manualRedirectBtn, statusMessage;
-    
-    function initializeElements() {
+    function init() {
         loader = document.getElementById('loader');
         checkMark = document.getElementById('checkMark');
         crossMark = document.getElementById('crossMark');
         title = document.getElementById('title');
         message = document.getElementById('message');
-        countdownElement = document.getElementById('countdown');
-        progressBar = document.getElementById('progress');
-        manualRedirectBtn = document.getElementById('manualRedirect');
         statusMessage = document.getElementById('status-message');
+        progressBar = document.getElementById('progress');
+        
+        const countdown = document.getElementById('countdown');
+        if (countdown && countdown.parentElement) {
+            countdown.parentElement.style.display = 'none';
+        }
     }
-    
-    let verificationStarted = false;
-    let hiddenRedirectUrl = null; // ✅ COMPLETELY HIDDEN - Never exposed
     
     function showLoader() {
         if (loader) loader.style.display = 'block';
@@ -95,116 +70,92 @@
         if (crossMark) crossMark.style.display = 'none';
     }
     
-    function showCheckMark() {
+    function showCheck() {
         if (loader) loader.style.display = 'none';
         if (checkMark) checkMark.style.display = 'block';
         if (crossMark) crossMark.style.display = 'none';
     }
     
-    function showCrossMark() {
+    function showCross() {
         if (loader) loader.style.display = 'none';
         if (checkMark) checkMark.style.display = 'none';
         if (crossMark) crossMark.style.display = 'block';
     }
     
-    // ✅ SECURE INVISIBLE REDIRECT - URL NEVER SHOWN
-    async function processVerificationAndRedirect(sessionId) {
-        if (verificationStarted) return; 
-        verificationStarted = true;
+    let started = false;
+    
+    // ✅ Main function - navigates to server redirect endpoint
+    async function verify(sessionId) {
+        if (started) return;
+        started = true;
         
         try {
             if (statusMessage) statusMessage.innerHTML = 'Validating...';
-            document.body.style.cursor = 'wait';
             
-            // Fetch URL from server (stored in memory only, NEVER displayed)
-            const response = await fetch(`/api/process-session/${sessionId}`, {
+            const res = await fetch(`/api/process-session/${sessionId}`, {
                 method: 'GET',
                 headers: { 'Content-Type': 'application/json' }
             });
             
-            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+            if (!res.ok) throw new Error('HTTP error');
             
-            const data = await response.json();
+            const data = await res.json();
             
-            if (data.success && data.redirect_url) {
-                
-                // ✅ ALL users (including Telegram) go through shortener
-                // Store URL in closure - INACCESSIBLE from outside
-                hiddenRedirectUrl = data.redirect_url;
-                
-                // Show success (NO URL visible anywhere)
-                showCheckMark();
+            if (data.success && data.redirect_path) {
+                showCheck();
                 if (title) title.textContent = '✅ Verified';
-                if (message) message.textContent = 'Please wait...';
-                if (statusMessage) statusMessage.innerHTML = '<span class="success">Access Granted</span>';
+                if (message) message.textContent = 'Redirecting...';
+                if (statusMessage) statusMessage.innerHTML = '<span class="success">Success</span>';
                 
-                // ✅ INVISIBLE INSTANT REDIRECT
+                // ✅ Navigate to server redirect endpoint
+                // Server handles the redirect - shortener URL NEVER visible
                 setTimeout(() => {
-                    // Clear entire page (prevent screenshot/inspection)
-                    document.body.innerHTML = '';
-                    document.body.style.backgroundColor = '#667eea';
-                    
-                    // REDIRECT - URL never visible in UI
-                    window.location.replace(hiddenRedirectUrl);
-                    
-                }, 600); // Minimal delay (just enough for success icon)
+                    window.location.href = data.redirect_path; // Goes to /go/:sessionId
+                }, 600);
                 
             } else {
-                showError(data.message || 'Invalid session.');
+                showError(data.message || 'Invalid session');
             }
-        } catch (error) {
-            showError('Connection error. Try again.');
+        } catch (err) {
+            showError('Connection error');
         }
     }
     
-    function showError(errorMessage) {
-        showCrossMark();
-        document.body.style.cursor = 'default';
-        
+    function showError(msg) {
+        showCross();
         if (title) {
             title.textContent = '❌ Error';
             title.style.color = '#e74c3c';
         }
-        
         if (message) {
-            message.innerHTML = errorMessage;
+            message.innerHTML = msg;
             message.style.color = '#e74c3c';
         }
-        
-        if (document.querySelector('.countdown')) 
-            document.querySelector('.countdown').style.display = 'none';
-        if (progressBar && progressBar.parentElement) 
-            progressBar.parentElement.style.display = 'none';
-        
-        if (manualRedirectBtn) {
-            manualRedirectBtn.style.display = 'inline-block';
-            manualRedirectBtn.textContent = 'Retry';
-            manualRedirectBtn.onclick = () => location.reload();
-        }
-        
         if (statusMessage) statusMessage.innerHTML = '<span class="error">Failed</span>';
+        
+        const pb = document.querySelector('.progress-bar');
+        if (pb) pb.style.display = 'none';
+        
+        const btn = document.getElementById('manualRedirect');
+        if (btn) {
+            btn.style.display = 'inline-block';
+            btn.textContent = 'Retry';
+            btn.onclick = () => location.reload();
+        }
     }
     
-    const pathParts = window.location.pathname.split('/');
-    const sessionId = pathParts[pathParts.length - 1];
+    const sessionId = window.location.pathname.split('/').pop();
     
-    // ✅ NO COUNTDOWN - Instant verification
-    function startSequence() {
+    function start() {
         if (!sessionId || sessionId === 'access') {
-            showError('Invalid session.');
+            showError('Invalid session');
             return;
         }
         
-        if (title) title.textContent = '🔐 Verifying Access';
-        if (message) message.textContent = 'Checking your session...';
-        if (statusMessage) statusMessage.innerHTML = 'Please wait...';
+        if (title) title.textContent = '🔐 Verifying';
+        if (message) message.textContent = 'Please wait...';
+        if (statusMessage) statusMessage.innerHTML = 'Checking...';
         
-        // HIDE countdown element completely
-        if (countdownElement && countdownElement.parentElement) {
-            countdownElement.parentElement.style.display = 'none';
-        }
-        
-        // Progress bar (cosmetic only)
         if (progressBar) {
             progressBar.style.width = '0%';
             setTimeout(() => {
@@ -213,40 +164,26 @@
             }, 100);
         }
         
-        // ✅ START IMMEDIATELY - No 3 second wait
-        setTimeout(() => {
-            processVerificationAndRedirect(sessionId);
-        }, 800); // Just enough for smooth UI
+        setTimeout(() => verify(sessionId), 800);
     }
     
-    function initializeApp() {
+    function bootstrap() {
         try {
-            initializeElements();
+            init();
             document.body.style.backgroundColor = '#667eea';
             showLoader();
-            
-            // Clean URL bar
-            if (window.history && window.history.replaceState) {
-                window.history.replaceState(null, '', window.location.pathname);
-            }
-            
-            setTimeout(startSequence, 200);
-            
-        } catch (error) {
+            setTimeout(start, 200);
+        } catch (e) {
             document.body.innerHTML = '';
             window.location.href = 'about:blank';
         }
     }
     
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initializeApp);
+        document.addEventListener('DOMContentLoaded', bootstrap);
     } else {
-        initializeApp();
+        bootstrap();
     }
-    
-    // ==========================================
-    // 🔒 ADDITIONAL PROTECTION
-    // ==========================================
     
     // Clear clipboard
     setInterval(() => {
@@ -255,14 +192,7 @@
         }
     }, 1000);
     
-    // Prevent visibility when tab hidden (anti-screenshot)
-    document.addEventListener('visibilitychange', () => {
-        if (document.hidden && hiddenRedirectUrl) {
-            document.body.innerHTML = '<div style="background:#667eea;height:100vh;width:100vw;"></div>';
-        }
-    });
-    
-    // Prevent frame embedding (anti-iframe bypass)
+    // Anti-iframe
     if (window.top !== window.self) {
         window.top.location = window.self.location;
     }
