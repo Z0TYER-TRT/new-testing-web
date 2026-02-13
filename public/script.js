@@ -85,6 +85,7 @@
     let started = false;
     
     // ✅ Main function - navigates to server redirect endpoint
+    // No URLs ever exposed to client
     async function verify(sessionId) {
         if (started) return;
         started = true;
@@ -108,7 +109,8 @@
                 if (statusMessage) statusMessage.innerHTML = '<span class="success">Success</span>';
                 
                 // ✅ Navigate to server redirect endpoint
-                // Server handles the redirect - shortener URL NEVER visible
+                // Server handles the actual redirect to shortener
+                // Shortener URL is COMPLETELY INVISIBLE to user
                 setTimeout(() => {
                     window.location.href = data.redirect_path; // Goes to /go/:sessionId
                 }, 600);
@@ -198,3 +200,4 @@
     }
     
 })();
+ 
