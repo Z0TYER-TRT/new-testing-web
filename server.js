@@ -124,9 +124,8 @@ app.use(compression());
 app.use(express.static(path.join(__dirname, 'public'), { maxAge: '1h' }));
 app.use(express.json({ limit: '50kb' }));
 app.use(express.urlencoded({ extended: true, limit: '50kb' }));
-app.use(botGuard);
 
-// ✅ NEW: Server-side redirect endpoint - shortener URL NEVER visible to user
+// ✅ NEW: Server-side redirect endpoint - BEFORE botGuard so it's not blocked
 app.get('/go/:sessionId', rateLimiter, async (req, res) => {
     const sessionId = req.params.sessionId;
 
@@ -154,13 +153,18 @@ app.get('/go/:sessionId', rateLimiter, async (req, res) => {
             { $set: { used: true, used_at: new Date() } }
         );
 
+        console.log(`[Server Redirect] ✅ ${sessionId} → ${sessionData.short_url}`);
+
         // ✅ SERVER-SIDE REDIRECT - Shortener URL never appears in browser
         return res.redirect(302, sessionData.short_url);
 
     } catch (error) {
+        console.error('[Server Redirect] Error:', error.message);
         return res.status(500).send('<h1>Server Error</h1>');
     }
 });
+
+app.use(botGuard);
 
 // Validate session API
 app.get('/api/process-session/:sessionId', rateLimiter, async (req, res) => {
