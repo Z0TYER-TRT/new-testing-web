@@ -84,8 +84,8 @@
     
     let started = false;
     
-    // ✅ Main function - navigates to server redirect endpoint
-    // No URLs ever exposed to client
+    // ✅ UPDATED: Navigate to server redirect endpoint (/go/:sessionId)
+    // Server handles shortener fetching and extraction completely invisibly
     async function verify(sessionId) {
         if (started) return;
         started = true;
@@ -108,9 +108,9 @@
                 if (message) message.textContent = 'Redirecting...';
                 if (statusMessage) statusMessage.innerHTML = '<span class="success">Success</span>';
                 
-                // ✅ Navigate to server redirect endpoint
-                // Server handles the actual redirect to shortener
-                // Shortener URL is COMPLETELY INVISIBLE to user
+                // ✅ CRITICAL: Navigate to server redirect endpoint
+                // Server handles the shortener URL - NEVER visible in browser
+                // User goes: /access/:id → /go/:id → server fetches shortener → final destination
                 setTimeout(() => {
                     window.location.href = data.redirect_path; // Goes to /go/:sessionId
                 }, 600);
@@ -135,69 +135,39 @@
         }
         if (statusMessage) statusMessage.innerHTML = '<span class="error">Failed</span>';
         
-        const pb = document.querySelector('.progress-bar');
-        if (pb) pb.style.display = 'none';
-        
-        const btn = document.getElementById('manualRedirect');
-        if (btn) {
-            btn.style.display = 'inline-block';
-            btn.textContent = 'Retry';
-            btn.onclick = () => location.reload();
+        const retryBtn = document.getElementById('manualRedirect');
+        if (retryBtn) {
+            retryBtn.style.display = 'block';
+            retryBtn.onclick = () => window.location.reload();
         }
     }
     
-    const sessionId = window.location.pathname.split('/').pop();
-    
-    function start() {
-        if (!sessionId || sessionId === 'access') {
-            showError('Invalid session');
-            return;
-        }
-        
-        if (title) title.textContent = '🔐 Verifying';
-        if (message) message.textContent = 'Please wait...';
-        if (statusMessage) statusMessage.innerHTML = 'Checking...';
-        
-        if (progressBar) {
-            progressBar.style.width = '0%';
-            setTimeout(() => {
-                progressBar.style.transition = 'width 1s linear';
-                progressBar.style.width = '100%';
-            }, 100);
-        }
-        
-        setTimeout(() => verify(sessionId), 800);
-    }
-    
-    function bootstrap() {
-        try {
-            init();
-            document.body.style.backgroundColor = '#667eea';
-            showLoader();
-            setTimeout(start, 200);
-        } catch (e) {
-            document.body.innerHTML = '';
-            window.location.href = 'about:blank';
-        }
-    }
-    
+    // Start when DOM ready
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', bootstrap);
+        document.addEventListener('DOMContentLoaded', () => {
+            init();
+            const path = window.location.pathname;
+            const sessionId = path.split('/').pop();
+            
+            if (sessionId && sessionId !== 'index.html' && sessionId !== '') {
+                showLoader();
+                setTimeout(() => verify(sessionId), 800);
+            } else {
+                showError('No session ID found');
+            }
+        });
     } else {
-        bootstrap();
-    }
-    
-    // Clear clipboard
-    setInterval(() => {
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText('').catch(() => {});
+        init();
+        const path = window.location.pathname;
+        const sessionId = path.split('/').pop();
+        
+        if (sessionId && sessionId !== 'index.html' && sessionId !== '') {
+            showLoader();
+            setTimeout(() => verify(sessionId), 800);
+        } else {
+            showError('No session ID found');
         }
-    }, 1000);
-    
-    // Anti-iframe
-    if (window.top !== window.self) {
-        window.top.location = window.self.location;
     }
     
 })();
- 
+                           
