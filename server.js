@@ -12,7 +12,7 @@ const PORT = process.env.PORT || 3000;
 // ==========================================
 // 🔐 SECURITY CONFIGURATION
 // ==========================================
-const API_SECRET_KEY = "redirect_kawaii_secure_key_2025";
+const API_SECRET_KEY = "Aniketsexvideo69";
 
 const BLOCKED_USER_AGENTS = ['curl', 'wget', 'python-requests', 'scrapy', 'bot', 'crawler', 'spider'];
 const RATE_LIMIT_WINDOW = 60000;
