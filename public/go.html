@@ -50,8 +50,10 @@
     </style>
 </head>
 <body>
-    <!-- Removed 'sandbox' to ensure shortener loads -->
-    <iframe id="content-frame"></iframe>
+    <!-- ⚠️ CRITICAL FIX: Removed 'allow-top-navigation-by-user-activation' and 'allow-top-navigation' -->
+    <!-- This prevents the shortener from auto-redirecting, forcing it to show the "Click to Continue" page. -->
+    <iframe id="content-frame" sandbox="allow-forms allow-scripts allow-same-origin allow-popups"></iframe>
+    
     <div id="fallback-msg">
         <h3>Loading...</h3>
         <p>Please wait...</p>
@@ -73,25 +75,24 @@
 
                     if (data.success && data.target_url) {
                         console.log("Loading Shortener...");
-                        // Load the shortener URL in the iframe
                         iframe.src = data.target_url;
                         
                         // ✅ SAFETY FALLBACK TIMER (10 Seconds)
-                        // Wait 10 seconds. If the shortener blocks the iframe, fallback triggers.
-                        // Fallback goes to the SHORTENER (so ads are shown/visited).
+                        // If the shortener doesn't load or gets blocked, fallback to shortener.
                         redirectTimer = setTimeout(() => {
-                            console.warn("Iframe timed out. Fallback to Shortener.");
+                            console.warn("Iframe failed to load shortener. Fallback trigger.");
+                            fallbackMsg.querySelector('h3').textContent = "Loading...";
                             fallbackMsg.style.display = 'block';
                             
                             setTimeout(() => {
-                                // Fallback to Shortener URL
+                                // Fallback to Shortener
                                 window.top.location.href = data.target_url;
                             }, 2000);
                         }, 10000);
 
-                        // If the iframe loads successfully, clear the timer and hide message
+                        // If the shortener loads successfully, clear the timer and hide message
                         iframe.onload = () => {
-                            console.log("✅ Iframe loaded successfully.");
+                            console.log("✅ Shortner loaded successfully.");
                             if(redirectTimer) clearTimeout(redirectTimer);
                             fallbackMsg.style.display = 'none';
                         };
@@ -101,7 +102,7 @@
                     }
                 } catch (error) {
                     console.error(error);
-                    document.body.innerHTML = `<h1 style="font-family: sans-serif; text-align: center; margin-top: 50px; color: **;">Connection Failed</h1>`;
+                    document.body.innerHTML = `<h1 style="font-family: sans-serif; text-align: center; margin-top: 50px; color: #333;">Connection Failed</h1>`;
                 }
             }
 
