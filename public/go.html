@@ -31,18 +31,30 @@
             text-align: center;
             display: none;
             z-index: 2;
-            background: rgba(255,255,255,0.9);
+            background: rgba(255,255,255,0.95);
             padding: 20px;
             border-radius: 10px;
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            border: 1px solid #e0e0e0;
+            max-width: 300px;
+        }
+        #fallback-msg h3 {
+            margin: 0 0 10px 0;
+            color: #d32f2f;
+        }
+        #fallback-msg p {
+            margin: 0;
+            color: #555;
+            font-size: 14px;
         }
     </style>
 </head>
 <body>
-    <iframe id="content-frame" sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-top-navigation-by-user-activation"></iframe>
+    <!-- Removed 'sandbox' attribute to ensure blog loads correctly -->
+    <iframe id="content-frame"></iframe>
     <div id="fallback-msg">
-        <h3>Content failed to load securely.</h3>
-        <p>Redirecting automatically...</p>
+        <h3>Loading...</h3>
+        <p>Please wait while we securely redirect you.</p>
     </div>
 
     <script>
@@ -60,31 +72,37 @@
                     const data = await res.json();
 
                     if (data.success && data.target_url) {
+                        console.log("Loading content...");
                         iframe.src = data.target_url;
                         
-                        // ✅ SAFETY FALLBACK TIMER
-                        // If the iframe is blocked (X-Frame-Options), it often stays blank.
-                        // If the iframe doesn't load in 5 seconds, we redirect the whole window.
+                        // ✅ IMPROVED SAFETY FALLBACK TIMER (10 Seconds)
+                        // Wait 10 seconds for iframe to load.
+                        // Many blogs are slow; 5s was too short.
                         redirectTimer = setTimeout(() => {
-                            console.log("Iframe appears blocked or failed to load. Redirecting to URL.");
+                            console.warn("Iframe timed out after 10s. Redirecting to URL.");
+                            fallbackMsg.querySelector('h3').textContent = "Content Blocked";
+                            fallbackMsg.querySelector('p').textContent = "Opening in new tab...";
                             fallbackMsg.style.display = 'block';
+                            
                             setTimeout(() => {
                                 window.top.location.href = data.target_url;
                             }, 2000);
-                        }, 5000);
+                        }, 10000);
 
-                        // Try to detect iframe load (Best effort, cross-origin restricted)
+                        // Try to detect iframe load
                         iframe.onload = () => {
-                            console.log("Iframe loaded successfully.");
+                            console.log("✅ Iframe loaded successfully.");
+                            // If iframe loads, clear the timer and hide message
                             if(redirectTimer) clearTimeout(redirectTimer);
+                            fallbackMsg.style.display = 'none';
                         };
 
                     } else {
-                        document.body.innerHTML = `<h1 style="font-family: sans-serif; text-align: center; margin-top: 50px;">Error: ${data.message || 'Unknown error'}</h1>`;
+                        document.body.innerHTML = `<h1 style="font-family: sans-serif; text-align: center; margin-top: 50px; color: #333;">Error: ${data.message || 'Unknown error'}</h1>`;
                     }
                 } catch (error) {
                     console.error(error);
-                    document.body.innerHTML = `<h1 style="font-family: sans-serif; text-align: center; margin-top: 50px;">Connection Failed</h1>`;
+                    document.body.innerHTML = `<h1 style="font-family: sans-serif; text-align: center; margin-top: 50px; color: #333;">Connection Failed</h1>`;
                 }
             }
 
