@@ -3,17 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Verifying Access...</title>
+    <title>Processing Your Request</title>
     <meta name="robots" content="noindex, nofollow">
     <meta name="referrer" content="no-referrer">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <link rel="stylesheet" href="/style.css">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self';">
-    
-    <!-- Prevent indexing and caching -->
-    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-    <meta http-equiv="Pragma" content="no-cache">
-    <meta http-equiv="Expires" content="0">
+    <!-- Security headers via meta tags -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self';">
 </head>
 <body>
     <div class="container">
@@ -23,69 +19,39 @@
                 <div class="check-mark" id="checkMark">✓</div>
                 <div class="cross-mark" id="crossMark">✗</div>
             </div>
-            <h2 id="title">🔐 Verifying Access</h2>
-            <p id="message">Checking your session...</p>
+            <h2 id="title">🔗 Processing Your Request</h2>
+            <p id="message">Verifying your access and preparing your link...</p>
             <div class="progress-bar">
                 <div class="progress" id="progress"></div>
             </div>
-            <!-- HIDDEN: No countdown visible to user -->
-            <p class="countdown" style="display:none;">
-                <span id="countdown">0</span>
-            </p>
+            <p class="countdown">Redirecting in <span id="countdown">3</span> seconds</p>
             <p id="status-message">Please wait...</p>
-            <button id="manualRedirect" class="btn" style="display:none;">Retry</button>
+            <noscript>
+                <p class="error">JavaScript is required for automatic redirection.</p>
+                <button id="manualRedirect" class="btn" style="display:none;">Continue Manually</button>
+            </noscript>
         </div>
     </div>
-    
-    <!-- Main security script -->
     <script src="/script.js"></script>
-    
-    <!-- Additional inline protection -->
+    <!-- Additional security script -->
     <script>
-        // Prevent any console access
+        // Prevent inspection
         (function() {
-            // Override console completely
-            const emptyFunc = function() {};
-            const emptyObj = { log: emptyFunc, warn: emptyFunc, error: emptyFunc };
-            
-            try {
-                Object.defineProperty(window, 'console', {
-                    get: function() { return emptyObj; },
-                    set: function() {}
-                });
-            } catch(e) {}
-            
-            // Block keyboard completely on this page
+            // Block inspect element attempts
             document.onkeydown = function(e) {
-                e = e || window.event;
-                // Block everything
-                if (e.keyCode) {
-                    e.preventDefault();
-                    e.stopPropagation();
+                if (e.keyCode === 123) { // F12
                     return false;
                 }
-            };
-            
-            // Prevent long-press on mobile
-            document.addEventListener('touchstart', function(e) {
-                if (e.touches.length > 1) {
-                    e.preventDefault();
+                if (e.ctrlKey && e.shiftKey && e.keyCode === 'I'.charCodeAt(0)) {
+                    return false;
                 }
-            }, { passive: false });
-            
-            let lastTouchEnd = 0;
-            document.addEventListener('touchend', function(e) {
-                const now = Date.now();
-                if (now - lastTouchEnd <= 300) {
-                    e.preventDefault();
+                if (e.ctrlKey && e.shiftKey && e.keyCode === 'J'.charCodeAt(0)) {
+                    return false;
                 }
-                lastTouchEnd = now;
-            }, false);
-            
-            // Prevent any text selection
-            document.onselectstart = function() { return false; };
-            document.onmousedown = function() { return false; };
-            
+                if (e.ctrlKey && e.keyCode === 'U'.charCodeAt(0)) {
+                    return false;
+                }
+            }
         })();
     </script>
 </body>
