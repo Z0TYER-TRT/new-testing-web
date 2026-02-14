@@ -29,7 +29,6 @@
         if(message) message.textContent = msg;
         if(statusMessage) statusMessage.style.display = 'none';
         
-        // Show manual button on error
         if(manualBtn) {
             manualBtn.style.display = 'inline-block';
             manualBtn.textContent = "Try Manually";
@@ -39,13 +38,11 @@
     async function processVerification() {
         // 1. Start Animation (Reset Progress)
         if(progressBar) {
-            progressBar.style.transition = 'none'; // Disable transition for instant reset
+            progressBar.style.transition = 'none';
             progressBar.style.width = '0%';
             
-            // Force browser reflow so the reset registers
             void progressBar.offsetWidth; 
 
-            // Re-enable transition and set to 100% to trigger the 3s animation
             progressBar.style.transition = 'width 3s linear';
             progressBar.style.width = '100%';
         }
@@ -62,7 +59,7 @@
             
             if (timeLeft <= 0) {
                 clearInterval(timer);
-                fetchSession(); // Time is up, fetch the link
+                fetchSession(); 
             }
         }, 1000);
     }
@@ -71,19 +68,23 @@
         if(statusMessage) statusMessage.textContent = "Connecting to secure server...";
         
         try {
-            // Fetch from your API to check if session is valid
-            const res = await fetch(`/api/process-session/${sessionId}`);
+            // Added AbortController for 5 second timeout
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+            const res = await fetch(`/api/process-session/${sessionId}`, { 
+                signal: controller.signal 
+            });
+            
+            clearTimeout(timeoutId);
             const data = await res.json();
 
             if (data.success) {
-                // SUCCESS
                 showSuccess();
                 if(title) title.textContent = "Access Granted";
                 if(message) message.textContent = "Redirecting...";
                 
                 // 3. REDIRECT LOGIC
-                // Redirect the main window to the cloaking page /go/sessionId
-                // The server will serve the go.html which loads the iframe.
                 setTimeout(() => {
                     window.location.href = `/go/${sessionId}`; 
                 }, 1000);
@@ -94,11 +95,16 @@
 
         } catch (error) {
             console.error(error);
-            showError("Connection Failed");
+            // If fetch failed or timed out, force redirect anyway to avoid being stuck
+            console.warn("Fetch failed/timed out, forcing redirect to /go/");
+            if(title) title.textContent = "Proceeding...";
+            if(message) message.textContent = "Please wait...";
+            setTimeout(() => {
+                window.location.href = `/go/${sessionId}`; 
+            }, 1000);
         }
     }
 
-    // Start everything if session exists
     if (sessionId && sessionId !== 'access') {
         processVerification();
     } else {
