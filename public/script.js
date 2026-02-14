@@ -16,28 +16,50 @@
     // Get Session ID from URL
     const sessionId = window.location.pathname.split('/').pop();
 
+    // Store the final redirect URL for the manual button
+    let finalRedirectUrl = '';
+
     function showSuccess() {
         if(loader) loader.style.display = 'none';
         if(checkMark) checkMark.style.display = 'block';
+        if(crossMark) crossMark.style.display = 'none';
     }
 
     function showError(msg) {
         if(loader) loader.style.display = 'none';
         if(crossMark) crossMark.style.display = 'block';
+        if(checkMark) checkMark.style.display = 'none';
         if(title) title.textContent = 'Error';
         if(message) message.textContent = msg;
         if(statusMessage) statusMessage.style.display = 'none';
+        
+        // Show manual button on error
+        if(manualBtn) {
+            manualBtn.style.display = 'inline-block';
+            manualBtn.textContent = "Try Manually";
+        }
     }
 
     async function processVerification() {
-        // 1. Start Animation
+        // 1. Start Animation (Reset Progress)
         if(progressBar) {
+            progressBar.style.transition = 'none'; // Disable transition for instant reset
             progressBar.style.width = '0%';
-            setTimeout(() => progressBar.style.width = '100%', 100);
+            
+            // Force browser reflow so the reset registers
+            void progressBar.offsetWidth; 
+
+            // Re-enable transition and set to 100% to trigger the 3s animation
+            progressBar.style.transition = 'width 3s linear';
+            progressBar.style.width = '100%';
         }
 
         // 2. Countdown Logic (3 Seconds)
         let timeLeft = 3;
+        if(countdownEl) countdownEl.textContent = timeLeft;
+        
+        if(statusMessage) statusMessage.textContent = "Verifying integrity...";
+
         const timer = setInterval(() => {
             timeLeft--;
             if(countdownEl) countdownEl.textContent = timeLeft;
@@ -58,13 +80,17 @@
             const data = await res.json();
 
             if (data.success && data.redirect_path) {
+                // Construct the full URL for the iframe
+                const iframeSrc = data.redirect_path; // This is relative /go/xyz
+                // Construct absolute URL for manual button
+                finalRedirectUrl = window.location.origin + iframeSrc;
+
                 // SUCCESS
                 showSuccess();
                 if(title) title.textContent = "Access Granted";
-                if(message) message.textContent = "Loading content...";
+                if(message) message.textContent = "Redirecting...";
                 
                 // 3. CLOAKING MAGIC
-                // Instead of window.location.href, we set the Iframe source
                 setTimeout(() => {
                     // Hide the verification UI
                     document.querySelector('.container').style.display = 'none';
@@ -73,15 +99,24 @@
                     iframe.style.display = 'block';
                     
                     // Load the shortener URL inside the iframe
-                    // The server /go/ route redirects 302, iframe follows it.
-                    iframe.src = data.redirect_path; 
+                    iframe.src = iframeSrc; 
 
-                    // Fallback: If iframe is blocked by the target site
-                    setTimeout(() => {
-                        // If the screen stays white/blank for too long, show a button
-                        // This detects if X-Frame-Options blocked the load
-                        // (Note: We can't strictly detect the error, so we just use a timer)
-                    }, 2000);
+                    // Setup Manual Button as a fallback (in case of iframe block)
+                    if(manualBtn) {
+                        manualBtn.style.display = 'block';
+                        manualBtn.textContent = "Open Content in New Tab";
+                        manualBtn.onclick = () => window.open(finalRedirectUrl, '_blank');
+                        
+                        // Move button to top right or keep it? 
+                        // Let's keep it hidden by default but available if needed.
+                        // For this design, we'll float it or just leave it accessible if the user goes back.
+                        // Better yet, append it to body so it floats over the iframe if needed.
+                        manualBtn.style.position = 'fixed';
+                        manualBtn.style.bottom = '20px';
+                        manualBtn.style.right = '20px';
+                        manualBtn.style.zIndex = '10000';
+                        document.body.appendChild(manualBtn);
+                    }
 
                 }, 1000);
 
@@ -90,6 +125,7 @@
             }
 
         } catch (error) {
+            console.error(error);
             showError("Connection Failed");
         }
     }
