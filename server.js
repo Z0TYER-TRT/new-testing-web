@@ -42,7 +42,6 @@ function rateLimiter(req, res, next) {
     const ip = req.headers['x-forwarded-for'] || req.connection.remoteAddress || 'unknown';
     const now = Date.now();
 
-    // Random cleanup (10% chance)
     if (Math.random() < 0.1) {
         for (const [key, data] of ipRequestCounts) {
             if (now > data.resetTime) ipRequestCounts.delete(key);
@@ -145,48 +144,8 @@ app.use(express.urlencoded({ extended: true, limit: '50kb' }));
 // Serve Static Files
 app.use(express.static(path.join(__dirname, 'public'), { maxAge: '1h' }));
 
-// ✅ 1. Iframe Redirect Target (Must be before botGuard)
-// The iframe loads this URL, and this URL redirects the iframe to the destination
-app.get('/go/:sessionId', rateLimiter, async (req, res) => {
-    const sessionId = req.params.sessionId;
-
-    if (!/^[a-zA-Z0-9-_]+$/.test(sessionId)) {
-        return res.status(400).send('<h1>Invalid Link</h1>');
-    }
-
-    try {
-        const shardIndex = getShardIndex(sessionId);
-        const collection = await getDatabase(shardIndex);
-        const sessionData = await collection.findOne({ session_id: sessionId });
-
-        if (!sessionData || !sessionData.short_url) {
-            return res.status(404).send('<h1>Link Not Found</h1>');
-        }
-
-        const ageSeconds = Math.floor((Date.now() - new Date(sessionData.created_at).getTime()) / 1000);
-        if (ageSeconds > 900) {
-            return res.status(410).send('<h1>Link Expired</h1>');
-        }
-
-        // Mark as used
-        await collection.updateOne(
-            { session_id: sessionId },
-            { $set: { used: true, used_at: new Date() } }
-        );
-
-        console.log(`[/go] Redirecting Iframe: ${sessionId} → ${sessionData.short_url}`);
-
-        // 302 Redirect (Iframe follows this)
-        return res.redirect(302, sessionData.short_url);
-
-    } catch (error) {
-        console.error('[/go] Error:', error.message);
-        return res.status(500).send('<h1>Server Error</h1>');
-    }
-});
-
-// ✅ 2. Session Validation API (Must be before botGuard)
-// The frontend script calls this to get the path for the iframe
+// ✅ 1. Session Validation API
+// Returns the ACTUAL shortener URL to be loaded in the iframe
 app.get('/api/process-session/:sessionId', rateLimiter, async (req, res) => {
     const sessionId = req.params.sessionId;
 
@@ -212,16 +171,27 @@ app.get('/api/process-session/:sessionId', rateLimiter, async (req, res) => {
             return res.json({ success: false, message: 'Session incomplete.' });
         }
 
-        // Return path for iframe
+        // Return the actual shortener URL for the iframe
         return res.json({
             success: true,
-            redirect_path: `/go/${sessionId}`
+            target_url: sessionData.short_url
         });
 
     } catch (error) {
         console.error('[API] Error:', error.message);
         return res.json({ success: false, message: 'Server error.' });
     }
+});
+
+// ✅ 2. The Cloaking Page Route
+// This serves the HTML page that contains the iframe
+app.get('/go/:sessionId', rateLimiter, (req, res) => {
+    const sessionId = req.params.sessionId;
+    if (!/^[a-zA-Z0-9-_]+$/.test(sessionId)) {
+        return res.status(400).send('<h1>Invalid Link</h1>');
+    }
+    // Serve the go.html file
+    res.sendFile(path.join(__dirname, 'public', 'go.html'));
 });
 
 // ==========================================
