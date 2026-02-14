@@ -28,9 +28,13 @@
         if(title) title.textContent = 'Error';
         if(message) message.textContent = msg;
         if(statusMessage) statusMessage.style.display = 'none';
-        
+
         if(manualBtn) {
             manualBtn.style.display = 'inline-block';
+            manualBtn.onclick = () => {
+                // Fallback: if API failed, try going to /go/ just in case
+                window.location.href = `/go/${sessionId}`;
+            };
             manualBtn.textContent = "Try Manually";
         }
     }
@@ -40,9 +44,7 @@
         if(progressBar) {
             progressBar.style.transition = 'none';
             progressBar.style.width = '0%';
-            
-            void progressBar.offsetWidth; 
-
+            void progressBar.offsetWidth; // Trigger reflow
             progressBar.style.transition = 'width 3s linear';
             progressBar.style.width = '100%';
         }
@@ -50,58 +52,52 @@
         // 2. Countdown Logic (3 Seconds)
         let timeLeft = 3;
         if(countdownEl) countdownEl.textContent = timeLeft;
-        
         if(statusMessage) statusMessage.textContent = "Verifying integrity...";
 
         const timer = setInterval(() => {
             timeLeft--;
             if(countdownEl) countdownEl.textContent = timeLeft;
-            
+
             if (timeLeft <= 0) {
                 clearInterval(timer);
-                fetchSession(); 
+                fetchSession();
             }
         }, 1000);
     }
 
     async function fetchSession() {
         if(statusMessage) statusMessage.textContent = "Connecting to secure server...";
-        
+
         try {
-            // Added AbortController for 5 second timeout
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 5000);
 
-            const res = await fetch(`/api/process-session/${sessionId}`, { 
-                signal: controller.signal 
+            const res = await fetch(`/api/process-session/${sessionId}`, {
+                signal: controller.signal
             });
-            
+
             clearTimeout(timeoutId);
             const data = await res.json();
 
-            if (data.success) {
+            if (data.success && data.target_url) {
                 showSuccess();
                 if(title) title.textContent = "Access Granted";
                 if(message) message.textContent = "Redirecting...";
                 
-                // 3. REDIRECT LOGIC
+                // REDIRECT LOGIC: Go directly to the shortener URL
                 setTimeout(() => {
-                    window.location.href = `/go/${sessionId}`; 
-                }, 1000);
+                    window.location.href = data.target_url;
+                }, 500); // Small 0.5s delay for UI update (optional, can be 0)
 
             } else {
+                // Session not found or expired
                 showError(data.message || 'Invalid Session');
             }
 
         } catch (error) {
-            console.error(error);
-            // If fetch failed or timed out, force redirect anyway to avoid being stuck
-            console.warn("Fetch failed/timed out, forcing redirect to /go/");
-            if(title) title.textContent = "Proceeding...";
-            if(message) message.textContent = "Please wait...";
-            setTimeout(() => {
-                window.location.href = `/go/${sessionId}`; 
-            }, 1000);
+            console.error("Fetch error:", error);
+            // If fetch failed, show error, but allow manual button
+            showError("Connection timed out. Please try manually.");
         }
     }
 
@@ -110,5 +106,4 @@
     } else {
         showError("Missing Session ID");
     }
-
 })();
