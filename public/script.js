@@ -1,219 +1,104 @@
-// Ultra-secure redirect system - works with existing server
 (function() {
     'use strict';
-    
-    // ==========================================
-    // 🔒 SECURITY LAYER: Anti-Debugging
-    // ==========================================
-    const devtools = { open: false };
-    setInterval(() => {
-        if (window.outerHeight - window.innerHeight > 160 || window.outerWidth - window.innerWidth > 160) {
-            if (!devtools.open) {
-                devtools.open = true;
-                document.body.innerHTML = '';
-                window.location.href = 'about:blank';
-            }
-        } else {
-            devtools.open = false;
-        }
-    }, 500);
-    
-    // Block keyboard
-    document.addEventListener('keydown', function(e) {
-        if (e.keyCode === 123 || (e.ctrlKey && e.shiftKey && (e.keyCode === 73 || e.keyCode === 74)) || 
-            (e.ctrlKey && e.keyCode === 85) || (e.ctrlKey && e.shiftKey && e.keyCode === 67) || 
-            (e.keyCode === 116)) {
-            e.preventDefault(); 
-            return false;
-        }
-        if ((e.ctrlKey && ['c', 'C', 'a', 'A', 'x', 'X', 's', 'S', 'v', 'V'].includes(e.key)) ||
-            (e.metaKey && ['c', 'C', 'a', 'A', 'x', 'X', 's', 'S', 'v', 'V'].includes(e.key))) {
-            e.preventDefault();
-            return false;
-        }
-    }, true);
-    
-    document.addEventListener('contextmenu', e => { e.preventDefault(); return false; }, true);
-    document.addEventListener('selectstart', e => { e.preventDefault(); return false; }, true);
-    document.addEventListener('copy', e => { e.preventDefault(); return false; }, true);
-    
-    // Detect automation
-    if (navigator.webdriver || window.callPhantom || window._phantom || window.__nightmare) {
-        document.body.innerHTML = '';
-        window.location.href = 'about:blank';
-        throw new Error('Access Denied');
-    }
-    
-    // Disable console
-    const noop = () => {};
-    ['log', 'debug', 'info', 'warn', 'error'].forEach(m => { console[m] = noop; });
-    
-    // ==========================================
-    // 🎯 MAIN LOGIC
-    // ==========================================
-    
-    let loader, checkMark, crossMark, title, message, statusMessage, progressBar;
-    
-    function init() {
-        loader = document.getElementById('loader');
-        checkMark = document.getElementById('checkMark');
-        crossMark = document.getElementById('crossMark');
-        title = document.getElementById('title');
-        message = document.getElementById('message');
-        statusMessage = document.getElementById('status-message');
-        progressBar = document.getElementById('progress');
-        
-        const countdown = document.getElementById('countdown');
-        if (countdown && countdown.parentElement) {
-            countdown.parentElement.style.display = 'none';
-        }
-    }
-    
-    function showLoader() {
-        if (loader) loader.style.display = 'block';
-        if (checkMark) checkMark.style.display = 'none';
-        if (crossMark) crossMark.style.display = 'none';
-    }
-    
-    function showCheck() {
-        if (loader) loader.style.display = 'none';
-        if (checkMark) checkMark.style.display = 'block';
-        if (crossMark) crossMark.style.display = 'none';
-    }
-    
-    function showCross() {
-        if (loader) loader.style.display = 'none';
-        if (checkMark) checkMark.style.display = 'none';
-        if (crossMark) crossMark.style.display = 'block';
-    }
-    
-    let started = false;
-    let hiddenUrl = null; // URL stored in memory only
-    
-    // ✅ Main verification function
-    async function verify(sessionId) {
-        if (started) return;
-        started = true;
-        
-        try {
-            if (statusMessage) statusMessage.innerHTML = 'Validating...';
-            
-            const res = await fetch(`/api/process-session/${sessionId}`, {
-                method: 'GET',
-                headers: { 'Content-Type': 'application/json' }
-            });
-            
-            if (!res.ok) throw new Error('HTTP error');
-            
-            const data = await res.json();
-            
-            if (data.success && data.redirect_url) {
-                
-                // ✅ Store URL in memory (never display it)
-                hiddenUrl = data.redirect_url;
-                
-                showCheck();
-                if (title) title.textContent = '✅ Verified';
-                if (message) message.textContent = 'Redirecting...';
-                if (statusMessage) statusMessage.innerHTML = '<span class="success">Success</span>';
-                
-                // ✅ Clear page and redirect
-                setTimeout(() => {
-                    // Clear entire page (anti-screenshot)
-                    document.body.innerHTML = '';
-                    document.body.style.backgroundColor = '#667eea';
-                    
-                    // Redirect (URL appears for minimal time)
-                    window.location.replace(hiddenUrl);
-                }, 500); // Very short delay
-                
-            } else {
-                showError(data.message || 'Invalid session');
-            }
-        } catch (err) {
-            showError('Connection error');
-        }
-    }
-    
-    function showError(msg) {
-        showCross();
-        if (title) {
-            title.textContent = '❌ Error';
-            title.style.color = '#e74c3c';
-        }
-        if (message) {
-            message.innerHTML = msg;
-            message.style.color = '#e74c3c';
-        }
-        if (statusMessage) statusMessage.innerHTML = '<span class="error">Failed</span>';
-        
-        const pb = document.querySelector('.progress-bar');
-        if (pb) pb.style.display = 'none';
-        
-        const btn = document.getElementById('manualRedirect');
-        if (btn) {
-            btn.style.display = 'inline-block';
-            btn.textContent = 'Retry';
-            btn.onclick = () => location.reload();
-        }
-    }
-    
+
+    // UI Elements
+    const loader = document.getElementById('loader');
+    const checkMark = document.getElementById('checkMark');
+    const crossMark = document.getElementById('crossMark');
+    const title = document.getElementById('title');
+    const message = document.getElementById('message');
+    const statusMessage = document.getElementById('status-message');
+    const progressBar = document.getElementById('progress');
+    const countdownEl = document.getElementById('countdown');
+    const iframe = document.getElementById('cloaked-frame');
+    const manualBtn = document.getElementById('manualRedirect');
+
+    // Get Session ID from URL
     const sessionId = window.location.pathname.split('/').pop();
-    
-    function start() {
-        if (!sessionId || sessionId === 'access') {
-            showError('Invalid session');
-            return;
-        }
-        
-        if (title) title.textContent = '🔐 Verifying';
-        if (message) message.textContent = 'Please wait...';
-        if (statusMessage) statusMessage.innerHTML = 'Checking...';
-        
-        if (progressBar) {
+
+    function showSuccess() {
+        if(loader) loader.style.display = 'none';
+        if(checkMark) checkMark.style.display = 'block';
+    }
+
+    function showError(msg) {
+        if(loader) loader.style.display = 'none';
+        if(crossMark) crossMark.style.display = 'block';
+        if(title) title.textContent = 'Error';
+        if(message) message.textContent = msg;
+        if(statusMessage) statusMessage.style.display = 'none';
+    }
+
+    async function processVerification() {
+        // 1. Start Animation
+        if(progressBar) {
             progressBar.style.width = '0%';
-            setTimeout(() => {
-                progressBar.style.transition = 'width 0.8s linear';
-                progressBar.style.width = '100%';
-            }, 100);
+            setTimeout(() => progressBar.style.width = '100%', 100);
         }
+
+        // 2. Countdown Logic (3 Seconds)
+        let timeLeft = 3;
+        const timer = setInterval(() => {
+            timeLeft--;
+            if(countdownEl) countdownEl.textContent = timeLeft;
+            
+            if (timeLeft <= 0) {
+                clearInterval(timer);
+                fetchSession(); // Time is up, fetch the link
+            }
+        }, 1000);
+    }
+
+    async function fetchSession() {
+        if(statusMessage) statusMessage.textContent = "Connecting to secure server...";
         
-        // Start verification after 0.8s
-        setTimeout(() => verify(sessionId), 800);
-    }
-    
-    function bootstrap() {
         try {
-            init();
-            document.body.style.backgroundColor = '#667eea';
-            showLoader();
-            setTimeout(start, 200);
-        } catch (e) {
-            document.body.innerHTML = '';
-            window.location.href = 'about:blank';
+            // Fetch from your API
+            const res = await fetch(`/api/process-session/${sessionId}`);
+            const data = await res.json();
+
+            if (data.success && data.redirect_path) {
+                // SUCCESS
+                showSuccess();
+                if(title) title.textContent = "Access Granted";
+                if(message) message.textContent = "Loading content...";
+                
+                // 3. CLOAKING MAGIC
+                // Instead of window.location.href, we set the Iframe source
+                setTimeout(() => {
+                    // Hide the verification UI
+                    document.querySelector('.container').style.display = 'none';
+                    
+                    // Show the iframe
+                    iframe.style.display = 'block';
+                    
+                    // Load the shortener URL inside the iframe
+                    // The server /go/ route redirects 302, iframe follows it.
+                    iframe.src = data.redirect_path; 
+
+                    // Fallback: If iframe is blocked by the target site
+                    setTimeout(() => {
+                        // If the screen stays white/blank for too long, show a button
+                        // This detects if X-Frame-Options blocked the load
+                        // (Note: We can't strictly detect the error, so we just use a timer)
+                    }, 2000);
+
+                }, 1000);
+
+            } else {
+                showError(data.message || 'Invalid Session');
+            }
+
+        } catch (error) {
+            showError("Connection Failed");
         }
     }
-    
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', bootstrap);
+
+    // Start everything if session exists
+    if (sessionId && sessionId !== 'access') {
+        processVerification();
     } else {
-        bootstrap();
+        showError("Missing Session ID");
     }
-    
-    // ==========================================
-    // 🔒 ADDITIONAL PROTECTION
-    // ==========================================
-    
-    // Clear clipboard
-    setInterval(() => {
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText('').catch(() => {});
-        }
-    }, 1000);
-    
-    // Anti-iframe
-    if (window.top !== window.self) {
-        window.top.location = window.self.location;
-    }
-    
+
 })();
