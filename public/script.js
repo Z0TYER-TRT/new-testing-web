@@ -71,21 +71,21 @@
         if(statusMessage) statusMessage.textContent = "Connecting to secure server...";
         
         try {
-            // Fetch from your API
+            // Fetch from your API to check if session is valid
             const res = await fetch(`/api/process-session/${sessionId}`);
             const data = await res.json();
 
-            if (data.success && data.redirect_path) {
+            if (data.success) {
                 // SUCCESS
                 showSuccess();
                 if(title) title.textContent = "Access Granted";
                 if(message) message.textContent = "Redirecting...";
                 
                 // 3. REDIRECT LOGIC
-                // Instead of an iframe, we redirect the main window to the internal /go/ path
-                // This hides the actual shortener URL stored in the database.
+                // Redirect the main window to the cloaking page /go/sessionId
+                // The server will serve the go.html which loads the iframe.
                 setTimeout(() => {
-                    window.location.href = data.redirect_path; 
+                    window.location.href = `/go/${sessionId}`; 
                 }, 1000);
 
             } else {
