@@ -50,11 +50,11 @@
     </style>
 </head>
 <body>
-    <!-- Removed 'sandbox' attribute to ensure blog loads correctly -->
+    <!-- Removed 'sandbox' to allow full functionality -->
     <iframe id="content-frame"></iframe>
     <div id="fallback-msg">
-        <h3>Loading...</h3>
-        <p>Please wait while we securely redirect you.</p>
+        <h3>Content Blocked</h3>
+        <p>Opening Shortener...</p>
     </div>
 
     <script>
@@ -72,19 +72,20 @@
                     const data = await res.json();
 
                     if (data.success && data.target_url) {
-                        console.log("Loading content...");
+                        console.log("Loading Shortener...");
+                        // Load the shortener URL in the iframe
                         iframe.src = data.target_url;
                         
-                        // ✅ IMPROVED SAFETY FALLBACK TIMER (10 Seconds)
-                        // Wait 10 seconds for iframe to load.
-                        // Many blogs are slow; 5s was too short.
+                        // ✅ SAFETY FALLBACK TIMER (10 Seconds)
+                        // If the shortener site blocks the iframe, fallback to the shortener URL.
                         redirectTimer = setTimeout(() => {
-                            console.warn("Iframe timed out after 10s. Redirecting to URL.");
-                            fallbackMsg.querySelector('h3').textContent = "Content Blocked";
-                            fallbackMsg.querySelector('p').textContent = "Opening in new tab...";
+                            console.warn("Iframe timed out. Redirecting to Shortener URL.");
+                            fallbackMsg.querySelector('h3').textContent = "Opening in New Tab";
+                            fallbackMsg.querySelector('p').textContent = "Please wait...";
                             fallbackMsg.style.display = 'block';
                             
                             setTimeout(() => {
+                                // Fallback to the Shortener URL so the user can see ads/click button
                                 window.top.location.href = data.target_url;
                             }, 2000);
                         }, 10000);
@@ -92,7 +93,7 @@
                         // Try to detect iframe load
                         iframe.onload = () => {
                             console.log("✅ Iframe loaded successfully.");
-                            // If iframe loads, clear the timer and hide message
+                            // If iframe loads, clear the timer
                             if(redirectTimer) clearTimeout(redirectTimer);
                             fallbackMsg.style.display = 'none';
                         };
