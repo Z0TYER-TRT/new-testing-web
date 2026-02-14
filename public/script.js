@@ -1,214 +1,219 @@
-// Enhanced anti-debugging and anti-bypass protection
+// Ultra-secure redirect system - works with existing server
 (function() {
     'use strict';
     
-    // --- Anti-Debugging Logic (unchanged from your snippet) ---
-    const devtools = { open: false, orientation: null };
-    const threshold = 160;
-    
+    // ==========================================
+    // 🔒 SECURITY LAYER: Anti-Debugging
+    // ==========================================
+    const devtools = { open: false };
     setInterval(() => {
-        if (window.outerHeight - window.innerHeight > threshold || 
-            window.outerWidth - window.innerWidth > threshold) {
+        if (window.outerHeight - window.innerHeight > 160 || window.outerWidth - window.innerWidth > 160) {
             if (!devtools.open) {
                 devtools.open = true;
-                document.body.innerHTML = '<h1>Security Error: Developer tools detected</h1>';
-                setTimeout(() => { window.location.href = 'about:blank'; }, 1000);
+                document.body.innerHTML = '';
+                window.location.href = 'about:blank';
             }
         } else {
             devtools.open = false;
         }
     }, 500);
     
+    // Block keyboard
     document.addEventListener('keydown', function(e) {
         if (e.keyCode === 123 || (e.ctrlKey && e.shiftKey && (e.keyCode === 73 || e.keyCode === 74)) || 
-            (e.ctrlKey && e.keyCode === 85) || (e.ctrlKey && e.shiftKey && e.keyCode === 67) || (e.keyCode === 116)) {
-            e.preventDefault(); return false;
+            (e.ctrlKey && e.keyCode === 85) || (e.ctrlKey && e.shiftKey && e.keyCode === 67) || 
+            (e.keyCode === 116)) {
+            e.preventDefault(); 
+            return false;
         }
         if ((e.ctrlKey && ['c', 'C', 'a', 'A', 'x', 'X', 's', 'S', 'v', 'V'].includes(e.key)) ||
             (e.metaKey && ['c', 'C', 'a', 'A', 'x', 'X', 's', 'S', 'v', 'V'].includes(e.key))) {
-            e.preventDefault(); return false;
+            e.preventDefault();
+            return false;
         }
-    });
+    }, true);
     
-    document.addEventListener('contextmenu', event => { event.preventDefault(); return false; });
-    document.addEventListener('selectstart', e => { e.preventDefault(); return false; });
-    document.addEventListener('dragstart', e => { e.preventDefault(); return false; });
+    document.addEventListener('contextmenu', e => { e.preventDefault(); return false; }, true);
+    document.addEventListener('selectstart', e => { e.preventDefault(); return false; }, true);
+    document.addEventListener('copy', e => { e.preventDefault(); return false; }, true);
     
-    // --- Main Logic ---
-
-    // Get DOM elements
-    let loader, checkMark, crossMark, title, message, countdownElement, 
-        progressBar, manualRedirectBtn, statusMessage;
+    // Detect automation
+    if (navigator.webdriver || window.callPhantom || window._phantom || window.__nightmare) {
+        document.body.innerHTML = '';
+        window.location.href = 'about:blank';
+        throw new Error('Access Denied');
+    }
     
-    function initializeElements() {
+    // Disable console
+    const noop = () => {};
+    ['log', 'debug', 'info', 'warn', 'error'].forEach(m => { console[m] = noop; });
+    
+    // ==========================================
+    // 🎯 MAIN LOGIC
+    // ==========================================
+    
+    let loader, checkMark, crossMark, title, message, statusMessage, progressBar;
+    
+    function init() {
         loader = document.getElementById('loader');
         checkMark = document.getElementById('checkMark');
         crossMark = document.getElementById('crossMark');
         title = document.getElementById('title');
         message = document.getElementById('message');
-        countdownElement = document.getElementById('countdown');
-        progressBar = document.getElementById('progress');
-        manualRedirectBtn = document.getElementById('manualRedirect');
         statusMessage = document.getElementById('status-message');
+        progressBar = document.getElementById('progress');
+        
+        const countdown = document.getElementById('countdown');
+        if (countdown && countdown.parentElement) {
+            countdown.parentElement.style.display = 'none';
+        }
     }
     
-    let verificationStarted = false; // Fixed variable name (was True which is invalid JS)
-    
-    // Function to show different icons
     function showLoader() {
         if (loader) loader.style.display = 'block';
         if (checkMark) checkMark.style.display = 'none';
         if (crossMark) crossMark.style.display = 'none';
     }
     
-    function showCheckMark() {
+    function showCheck() {
         if (loader) loader.style.display = 'none';
         if (checkMark) checkMark.style.display = 'block';
         if (crossMark) crossMark.style.display = 'none';
     }
     
-    function showCrossMark() {
+    function showCross() {
         if (loader) loader.style.display = 'none';
         if (checkMark) checkMark.style.display = 'none';
         if (crossMark) crossMark.style.display = 'block';
     }
     
-    // Core Verification Function
-    async function processVerificationAndRedirect(sessionId) {
-        if (verificationStarted) return; 
-        verificationStarted = true;
-        
-        console.log('=== PROCESSING SERVER VERIFICATION ===');
+    let started = false;
+    let hiddenUrl = null; // URL stored in memory only
+    
+    // ✅ Main verification function
+    async function verify(sessionId) {
+        if (started) return;
+        started = true;
         
         try {
-            // Update UI to show we are now contacting server
-            if (statusMessage) statusMessage.innerHTML = 'Validating session...';
-            document.body.style.cursor = 'wait';
+            if (statusMessage) statusMessage.innerHTML = 'Validating...';
             
-            // Call server API
-            const response = await fetch(`/api/process-session/${sessionId}`, {
+            const res = await fetch(`/api/process-session/${sessionId}`, {
                 method: 'GET',
                 headers: { 'Content-Type': 'application/json' }
             });
             
-            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+            if (!res.ok) throw new Error('HTTP error');
             
-            const data = await response.json();
+            const data = await res.json();
             
             if (data.success && data.redirect_url) {
-                // Success State
-                showCheckMark();
-                if (title) title.textContent = '✅ Access Granted';
-                if (message) message.textContent = 'Redirecting you now...';
-                if (statusMessage) statusMessage.innerHTML = '<span class="success">Success!</span>';
                 
-                // Final redirect
+                // ✅ Store URL in memory (never display it)
+                hiddenUrl = data.redirect_url;
+                
+                showCheck();
+                if (title) title.textContent = '✅ Verified';
+                if (message) message.textContent = 'Redirecting...';
+                if (statusMessage) statusMessage.innerHTML = '<span class="success">Success</span>';
+                
+                // ✅ Clear page and redirect
                 setTimeout(() => {
-                    window.location.href = data.redirect_url;
-                }, 1000); // 1 second delay to see the checkmark
+                    // Clear entire page (anti-screenshot)
+                    document.body.innerHTML = '';
+                    document.body.style.backgroundColor = '#667eea';
+                    
+                    // Redirect (URL appears for minimal time)
+                    window.location.replace(hiddenUrl);
+                }, 500); // Very short delay
+                
             } else {
-                // Server returned logical error (e.g. expired)
-                showError(data.message || 'Invalid session.');
+                showError(data.message || 'Invalid session');
             }
-        } catch (error) {
-            console.error('Fetch error:', error);
-            showError('Connection error. Please try again.');
+        } catch (err) {
+            showError('Connection error');
         }
     }
     
-    function showError(errorMessage) {
-        showCrossMark();
-        document.body.style.cursor = 'default';
-        
+    function showError(msg) {
+        showCross();
         if (title) {
-            title.textContent = '❌ Access Denied';
+            title.textContent = '❌ Error';
             title.style.color = '#e74c3c';
         }
-        
         if (message) {
-            message.innerHTML = `${errorMessage}`;
+            message.innerHTML = msg;
             message.style.color = '#e74c3c';
         }
+        if (statusMessage) statusMessage.innerHTML = '<span class="error">Failed</span>';
         
-        // Hide progress UI
-        if (document.querySelector('.countdown')) 
-            document.querySelector('.countdown').style.display = 'none';
-        if (progressBar && progressBar.parentElement) 
-            progressBar.parentElement.style.display = 'none';
+        const pb = document.querySelector('.progress-bar');
+        if (pb) pb.style.display = 'none';
         
-        // Show manual button
-        if (manualRedirectBtn) {
-            manualRedirectBtn.style.display = 'inline-block';
-            manualRedirectBtn.textContent = 'Try Again';
-            manualRedirectBtn.onclick = () => location.reload();
+        const btn = document.getElementById('manualRedirect');
+        if (btn) {
+            btn.style.display = 'inline-block';
+            btn.textContent = 'Retry';
+            btn.onclick = () => location.reload();
         }
-        
-        if (statusMessage) statusMessage.innerHTML = '<span class="error">Error</span>';
     }
     
-    // Get session ID from URL
-    const pathParts = window.location.pathname.split('/');
-    const sessionId = pathParts[pathParts.length - 1];
+    const sessionId = window.location.pathname.split('/').pop();
     
-    // Main Orchestrator
-    function startSequence() {
+    function start() {
         if (!sessionId || sessionId === 'access') {
-            showError('Invalid session ID.');
+            showError('Invalid session');
             return;
         }
-
-        console.log('Starting 3s Human Verification Timer...');
         
-        // 1. Initial UI State
-        if (title) title.textContent = '🔗 Human Verification';
-        if (message) message.textContent = 'Verifying you are human...';
-        if (statusMessage) statusMessage.innerHTML = 'Please wait...';
+        if (title) title.textContent = '🔐 Verifying';
+        if (message) message.textContent = 'Please wait...';
+        if (statusMessage) statusMessage.innerHTML = 'Checking...';
         
-        // 2. Animate Progress Bar (Visual 3s)
         if (progressBar) {
             progressBar.style.width = '0%';
             setTimeout(() => {
-                progressBar.style.transition = 'width 3s linear';
+                progressBar.style.transition = 'width 0.8s linear';
                 progressBar.style.width = '100%';
             }, 100);
         }
         
-        // 3. Start Countdown Logic
-        let timeLeft = 3;
-        if (countdownElement) countdownElement.textContent = timeLeft;
-        
-        const timer = setInterval(() => {
-            timeLeft--;
-            if (countdownElement) countdownElement.textContent = timeLeft;
-            
-            if (timeLeft <= 0) {
-                clearInterval(timer);
-                // 4. Countdown finished -> Call Server
-                processVerificationAndRedirect(sessionId);
-            }
-        }, 1000);
+        // Start verification after 0.8s
+        setTimeout(() => verify(sessionId), 800);
     }
     
-    // Initialize App
-    function initializeApp() {
+    function bootstrap() {
         try {
-            initializeElements();
+            init();
             document.body.style.backgroundColor = '#667eea';
             showLoader();
-            
-            // Start the flow
-            setTimeout(startSequence, 500); // Small buffer for DOM painting
-            
-        } catch (error) {
-            console.error('Init error:', error);
+            setTimeout(start, 200);
+        } catch (e) {
+            document.body.innerHTML = '';
+            window.location.href = 'about:blank';
         }
     }
     
-    // Bootstrapper
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initializeApp);
+        document.addEventListener('DOMContentLoaded', bootstrap);
     } else {
-        initializeApp();
+        bootstrap();
+    }
+    
+    // ==========================================
+    // 🔒 ADDITIONAL PROTECTION
+    // ==========================================
+    
+    // Clear clipboard
+    setInterval(() => {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText('').catch(() => {});
+        }
+    }, 1000);
+    
+    // Anti-iframe
+    if (window.top !== window.self) {
+        window.top.location = window.self.location;
     }
     
 })();
