@@ -50,11 +50,11 @@
     </style>
 </head>
 <body>
-    <!-- Removed 'sandbox' to allow full functionality -->
+    <!-- Removed 'sandbox' to ensure shortener loads -->
     <iframe id="content-frame"></iframe>
     <div id="fallback-msg">
-        <h3>Content Blocked</h3>
-        <p>Opening Shortener...</p>
+        <h3>Loading...</h3>
+        <p>Please wait...</p>
     </div>
 
     <script>
@@ -77,23 +77,21 @@
                         iframe.src = data.target_url;
                         
                         // ✅ SAFETY FALLBACK TIMER (10 Seconds)
-                        // If the shortener site blocks the iframe, fallback to the shortener URL.
+                        // Wait 10 seconds. If the shortener blocks the iframe, fallback triggers.
+                        // Fallback goes to the SHORTENER (so ads are shown/visited).
                         redirectTimer = setTimeout(() => {
-                            console.warn("Iframe timed out. Redirecting to Shortener URL.");
-                            fallbackMsg.querySelector('h3').textContent = "Opening in New Tab";
-                            fallbackMsg.querySelector('p').textContent = "Please wait...";
+                            console.warn("Iframe timed out. Fallback to Shortener.");
                             fallbackMsg.style.display = 'block';
                             
                             setTimeout(() => {
-                                // Fallback to the Shortener URL so the user can see ads/click button
+                                // Fallback to Shortener URL
                                 window.top.location.href = data.target_url;
                             }, 2000);
                         }, 10000);
 
-                        // Try to detect iframe load
+                        // If the iframe loads successfully, clear the timer and hide message
                         iframe.onload = () => {
                             console.log("✅ Iframe loaded successfully.");
-                            // If iframe loads, clear the timer
                             if(redirectTimer) clearTimeout(redirectTimer);
                             fallbackMsg.style.display = 'none';
                         };
@@ -103,7 +101,7 @@
                     }
                 } catch (error) {
                     console.error(error);
-                    document.body.innerHTML = `<h1 style="font-family: sans-serif; text-align: center; margin-top: 50px; color: #333;">Connection Failed</h1>`;
+                    document.body.innerHTML = `<h1 style="font-family: sans-serif; text-align: center; margin-top: 50px; color: **;">Connection Failed</h1>`;
                 }
             }
 
