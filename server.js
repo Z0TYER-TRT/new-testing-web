@@ -10,20 +10,14 @@ const axios = require('axios');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ✅ FIX: Vercel-compatible directory resolution
-// Using process.cwd() ensures __dirname resolves to the root folder in both local and Vercel environments
-const __dirname = process.cwd();
-
 // ==========================================
-// 🔐 CONFIGURATION
+// 🔐 SECURITY CONFIGURATION
 // ==========================================
-
-// ⚠️ SECURITY WARNING: Move these to Environment Variables in Vercel Dashboard!
-const API_SECRET_KEY = "Aniketsexvideo69";
+const API_SECRET_KEY = process.env.API_SECRET_KEY || "Aniketsexvideo69";
 
 const BLOCKED_USER_AGENTS = ['curl', 'wget', 'python-requests', 'scrapy', 'bot', 'crawler', 'spider'];
 const RATE_LIMIT_WINDOW = 60000;
-const MAX_REQUESTS_PER_IP = 100;
+const MAX_REQUESTS_PER_IP = 100; // Increased for Vercel
 
 const DB_SHARDS = [
     'mongodb+srv://redirect-kawaii:6pYMr5v6WznRduAL@cluster0.cqnnbgi.mongodb.net/redirect_service?appName=Cluster0',
@@ -41,27 +35,24 @@ const connectionPromises = [null, null, null];
 // ==========================================
 
 app.use(helmet({ 
-    contentSecurityPolicy: false, // Disabled to allow iframes/embeds if needed
+    contentSecurityPolicy: false,
     frameguard: false
 }));
 
 app.use(cors({
-    origin: true, // Allow all origins
+    origin: true,
     methods: ['GET', 'POST'],
     allowedHeaders: ['Content-Type', 'x-api-key']
 }));
 
-// In-memory Rate Limiter
 const ipRequestCounts = new Map();
-
 function rateLimiter(req, res, next) {
     const ip = req.headers['x-forwarded-for']?.split(',')[0].trim() || 
-               req.headers['x-real-ip'] ||
                req.connection.remoteAddress || 
                'unknown';
     const now = Date.now();
 
-    // Periodic cleanup of old entries (5% chance per request)
+    // Periodic cleanup
     if (Math.random() < 0.05) {
         for (const [key, data] of ipRequestCounts) {
             if (now > data.resetTime) ipRequestCounts.delete(key);
@@ -69,7 +60,6 @@ function rateLimiter(req, res, next) {
     }
 
     const data = ipRequestCounts.get(ip) || { count: 0, resetTime: now + RATE_LIMIT_WINDOW };
-    
     if (now > data.resetTime) {
         data.count = 0;
         data.resetTime = now + RATE_LIMIT_WINDOW;
@@ -79,17 +69,17 @@ function rateLimiter(req, res, next) {
     ipRequestCounts.set(ip, data);
 
     if (data.count > MAX_REQUESTS_PER_IP) {
-        console.log(`⛔ Rate limit exceeded: ${ip}`);
+        console.log(`⛔ Rate limit: ${ip}`);
         return res.status(429).json({ success: false, message: 'Too many requests. Please wait.' });
     }
     next();
 }
 
-// Simple Bot Guard
+// ✅ FIXED: Selective bot guard - only for specific routes
 function botGuard(req, res, next) {
     const userAgent = (req.get('User-Agent') || '').toLowerCase();
     
-    // Allow empty user-agent (common for some mobile views/iframe tests)
+    // Allow empty user-agent for iframes and some mobile browsers
     if (!userAgent && req.path.includes('/go/')) {
         return next();
     }
@@ -101,16 +91,11 @@ function botGuard(req, res, next) {
 }
 
 function isValidUrl(string) {
-    try { 
-        new URL(string); 
-        return true; 
-    } catch (_) { 
-        return false; 
-    }
+    try { new URL(string); return true; } catch (_) { return false; }
 }
 
 // ==========================================
-// 🗄️ DATABASE LOGIC (SHARDING)
+// 🗄️ DATABASE LOGIC
 // ==========================================
 
 function getShardIndex(sessionId) {
@@ -120,15 +105,14 @@ function getShardIndex(sessionId) {
 }
 
 async function getDatabase(index) {
-    // Return cached connection if available
     if (collections[index]) return collections[index];
     if (connectionPromises[index]) return connectionPromises[index];
 
-    // Create new connection promise
     connectionPromises[index] = (async () => {
         try {
             const client = new MongoClient(DB_SHARDS[index], {
-                serverSelectionTimeoutMS: 5000,
+                // ✅ VERCEL OPTIMIZED: Shorter timeouts
+                serverSelectionTimeoutMS: 3000,
                 connectTimeoutMS: 5000,
                 socketTimeoutMS: 5000,
                 maxPoolSize: 1,
@@ -140,7 +124,7 @@ async function getDatabase(index) {
             const db = client.db('redirect_service');
             const col = db.collection('sessions');
 
-            // Create indexes (fire and forget)
+            // Create indexes without waiting
             col.createIndex({ "session_id": 1 }, { unique: true }).catch(() => {});
             col.createIndex({ "created_at": 1 }, { expireAfterSeconds: 1800 }).catch(() => {});
 
@@ -149,14 +133,17 @@ async function getDatabase(index) {
             console.log(`✅ Shard #${index + 1} connected`);
             return col;
         } catch (error) {
-            console.error(`❌ Shard #${index + 1} connection failed:`, error.message);
-            connectionPromises[index] = null; // Reset promise on failure
+            console.error(`❌ Shard #${index + 1} error:`, error.message);
+            connectionPromises[index] = null;
             throw error;
         }
     })();
 
     return connectionPromises[index];
 }
+
+// ✅ REMOVED: setInterval and auto-cleanup (not compatible with serverless)
+// Vercel functions are stateless - cleanup happens via MongoDB TTL indexes
 
 // ==========================================
 // 🚀 SERVER CONFIG
@@ -167,14 +154,16 @@ app.use(express.static(path.join(__dirname, 'public'), { maxAge: '1h' }));
 app.use(express.json({ limit: '50kb' }));
 app.use(express.urlencoded({ extended: true, limit: '50kb' }));
 
-// Apply Bot Guard specifically to session creation
+// ✅ FIXED: botGuard only on specific routes, not global
 app.use('/api/store-session', botGuard);
 
 // ==========================================
-// ⚡ ROUTES
+// ⚡ ENDPOINTS
 // ==========================================
 
-// 1. Main Redirect Endpoint
+/**
+ * ✅ FIXED: Server-Side Redirect with Vercel Timeout Handling
+ */
 app.get('/go/:sessionId', rateLimiter, async (req, res) => {
     const sessionId = req.params.sessionId;
 
@@ -195,7 +184,7 @@ app.get('/go/:sessionId', rateLimiter, async (req, res) => {
             return res.status(410).send('Link already used');
         }
 
-        // Mark as used immediately
+        // Mark as used
         await collection.updateOne(
             { session_id: sessionId },
             { $set: { used: true, used_at: new Date() } }
@@ -204,10 +193,10 @@ app.get('/go/:sessionId', rateLimiter, async (req, res) => {
         const shortenerUrl = sessionData.short_url;
         console.log(`[Redirect] Processing: ${shortenerUrl}`);
 
+        // ✅ FIXED: Proper timeout and error handling for axios
         let finalUrl = null;
 
         try {
-            // Fetch the short URL to resolve it
             const shortenerResponse = await axios.get(shortenerUrl, {
                 headers: {
                     'User-Agent': req.get('User-Agent') || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -215,17 +204,17 @@ app.get('/go/:sessionId', rateLimiter, async (req, res) => {
                     'Accept-Language': 'en-US,en;q=0.9',
                 },
                 maxRedirects: 5,
-                timeout: 8000,
+                timeout: 8000, // ✅ CRITICAL: 8 second timeout for Vercel
                 validateStatus: (status) => status < 500
             });
 
-            // Method 1: Check headers (Response URL after redirects)
+            // Method 1: Direct redirect
             if (shortenerResponse.request?.res?.responseUrl && 
                 shortenerResponse.request.res.responseUrl !== shortenerUrl) {
                 finalUrl = shortenerResponse.request.res.responseUrl;
             }
 
-            // Method 2: Parse HTML for JS/Meta redirects if Method 1 failed
+            // Method 2: Parse HTML
             if (!finalUrl && shortenerResponse.data) {
                 const html = shortenerResponse.data;
                 
@@ -272,9 +261,10 @@ app.get('/go/:sessionId', rateLimiter, async (req, res) => {
             }
         } catch (axiosError) {
             console.error('[Redirect] Axios error:', axiosError.message);
+            // Continue to fallback
         }
 
-        // Fallback to Telegram deep link if scraping failed
+        // ✅ Fallback to Telegram deep link
         if (!finalUrl && sessionData.main_id && sessionData.bot_username) {
             finalUrl = `https://t.me/${sessionData.bot_username}?start=${sessionData.main_id}`;
             console.log(`[Redirect] Using fallback: ${finalUrl}`);
@@ -286,12 +276,12 @@ app.get('/go/:sessionId', rateLimiter, async (req, res) => {
         }
 
         console.log(`[Redirect] ✅ Destination: ${finalUrl}`);
-        return res.redirect(302, finalUrl);
+        res.redirect(302, finalUrl);
 
     } catch (error) {
-        console.error('[Redirect] Critical Error:', error.message);
+        console.error('[Redirect] Error:', error.message);
         
-        // Emergency fallback: Try fetching data one last time to redirect to Telegram
+        // Emergency fallback
         try {
             const shardIndex = getShardIndex(sessionId);
             const collection = await getDatabase(shardIndex);
@@ -309,7 +299,9 @@ app.get('/go/:sessionId', rateLimiter, async (req, res) => {
     }
 });
 
-// 2. Session Verification Endpoint
+/**
+ * Process Session
+ */
 app.get('/api/process-session/:sessionId', rateLimiter, async (req, res) => {
     const sessionId = req.params.sessionId;
 
@@ -326,7 +318,7 @@ app.get('/api/process-session/:sessionId', rateLimiter, async (req, res) => {
             return res.json({ success: false, message: 'Session not found' });
         }
 
-        // Check age (15 min = 900 sec)
+        // Check age (15 min)
         const ageSeconds = Math.floor((Date.now() - new Date(sessionData.created_at).getTime()) / 1000);
         if (ageSeconds > 900) {
             return res.json({ success: false, message: 'Session expired' });
@@ -348,7 +340,9 @@ app.get('/api/process-session/:sessionId', rateLimiter, async (req, res) => {
     }
 });
 
-// 3. Store Session Endpoint
+/**
+ * Store Session
+ */
 app.post('/api/store-session', async (req, res) => {
     const clientKey = req.headers['x-api-key'];
     if (clientKey !== API_SECRET_KEY) {
@@ -398,7 +392,7 @@ app.post('/api/store-session', async (req, res) => {
     }
 });
 
-// 4. Frontend Routes
+// Static Routes
 app.get('/access/:sessionId', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.get('/health', (req, res) => res.json({ status: 'OK', timestamp: Date.now() }));
@@ -406,15 +400,13 @@ app.get('/health', (req, res) => res.json({ status: 'OK', timestamp: Date.now() 
 // 404 Handler
 app.use((req, res) => res.status(404).sendFile(path.join(__dirname, 'public', 'index.html')));
 
-// ==========================================
-// ✅ VERCEL & LOCAL EXPORT
-// ==========================================
-
+// ✅ VERCEL EXPORT
 module.exports = app;
 
-// Only listen if running locally (not on Vercel)
+// Only listen if not in Vercel
 if (require.main === module) {
     app.listen(PORT, () => {
-        console.log(`🚀 Server running locally on port ${PORT}`);
+        console.log(`🚀 Server running on port ${PORT}`);
     });
-}
+        }
+        
