@@ -16,7 +16,7 @@ const BLOCKED_USER_AGENTS = ['curl', 'wget', 'python-requests', 'scrapy', 'bot',
 const RATE_LIMIT_WINDOW = 60000;
 const MAX_REQUESTS_PER_IP = 60;
 
-// 🗄️ Database Shards (Hardcoded as requested)
+// 🗄️ Database Shards
 const DB_SHARDS = [
     'mongodb+srv://redirect-kawaii:6pYMr5v6WznRduAL@cluster0.cqnnbgi.mongodb.net/redirect_service?appName=Cluster0',
     'mongodb+srv://redirect-kawaii2:HWoekNn54skXZ8GA@cluster1.gigfzvo.mongodb.net/redirect_service?appName=Cluster1',
@@ -77,10 +77,10 @@ function isValidUrl(string) {
     try { new URL(string); return true; } catch (_) { return false; }
 }
 
+// 🔧 FIXED SHARD INDEX: Always use Shard 0 (Cluster 0)
+// This ensures compatibility with data created by the "Old Server"
 function getShardIndex(sessionId) {
-    if (!sessionId) return 0;
-    const hash = crypto.createHash('md5').update(sessionId).digest('hex');
-    return parseInt(hash.substring(0, 8), 16) % DB_SHARDS.length;
+    return 0; 
 }
 
 // --- DATABASE CONNECTION ---
