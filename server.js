@@ -9,11 +9,7 @@ const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ==========================================
-// 🔐 SECURITY CONFIGURATION
-// ==========================================
 const API_SECRET_KEY = "Aniketsexvideo69";
-
 const BLOCKED_USER_AGENTS = ['curl', 'wget', 'python-requests', 'scrapy', 'bot', 'crawler', 'spider'];
 const RATE_LIMIT_WINDOW = 60000;
 const MAX_REQUESTS_PER_IP = 60;
@@ -24,22 +20,12 @@ const DB_SHARDS = [
     'mongodb+srv://redirect-kawaii3:wiCwqRkusOUoSX8J@cluster2.brkkpuv.mongodb.net/redirect_service?appName=Cluster2'
 ];
 
-// Connection State
 const clients = [null, null, null];
 const collections = [null, null, null];
 const connectionPromises = [null, null, null];
 
-// ==========================================
-// 🛡️ SECURITY MIDDLEWARE
-// ==========================================
-
 app.use(helmet({ contentSecurityPolicy: false }));
-
-app.use(cors({
-    origin: true,
-    methods: ['GET', 'POST'],
-    allowedHeaders: ['Content-Type', 'x-api-key']
-}));
+app.use(cors({ origin: true, methods: ['GET', 'POST'], allowedHeaders: ['Content-Type', 'x-api-key'] }));
 
 const ipRequestCounts = new Map();
 function rateLimiter(req, res, next) {
@@ -62,8 +48,7 @@ function rateLimiter(req, res, next) {
     ipRequestCounts.set(ip, data);
 
     if (data.count > MAX_REQUESTS_PER_IP) {
-        console.log(`⛔ Blocked IP: ${ip} (Rate Limit)`);
-        return res.status(429).json({ success: false, message: 'Too many requests. Please wait.' });
+        return res.status(429).json({ success: false, message: 'Too many requests.' });
     }
     next();
 }
@@ -72,7 +57,7 @@ function botGuard(req, res, next) {
     const userAgent = (req.get('User-Agent') || '').toLowerCase();
     if (!userAgent) return res.status(403).send('Access Denied');
     if (BLOCKED_USER_AGENTS.some(bot => userAgent.includes(bot))) {
-        return res.status(403).json({ success: false, message: 'Access Denied: Automated access detected' });
+        return res.status(403).json({ success: false, message: 'Automated access detected' });
     }
     next();
 }
@@ -80,10 +65,6 @@ function botGuard(req, res, next) {
 function isValidUrl(string) {
     try { new URL(string); return true; } catch (_) { return false; }
 }
-
-// ==========================================
-// 🗄️ DATABASE LOGIC
-// ==========================================
 
 function getShardIndex(sessionId) {
     if (!sessionId) return 0;
@@ -97,7 +78,6 @@ async function getDatabase(index) {
 
     connectionPromises[index] = (async () => {
         try {
-            console.log(`🔌 Connecting to Shard #${index + 1}...`);
             const client = new MongoClient(DB_SHARDS[index], {
                 useNewUrlParser: true,
                 useUnifiedTopology: true,
@@ -127,152 +107,145 @@ async function getDatabase(index) {
     return connectionPromises[index];
 }
 
-// ==========================================
-// 🧹 AUTOMATIC CLEANUP
-// ==========================================
-
 async function cleanupOldSessions() {
-    console.log('🧹 Starting cleanup task...');
     const cutoffDate = new Date(Date.now() - 30 * 60 * 1000);
     for (let i = 0; i < DB_SHARDS.length; i++) {
         try {
             const col = await getDatabase(i);
             if (col) {
-                const result = await col.deleteMany({ created_at: { $lt: cutoffDate } });
-                if (result.deletedCount > 0) {
-                    console.log(`Shard #${i + 1}: Cleaned ${result.deletedCount} sessions`);
-                }
+                await col.deleteMany({ created_at: { $lt: cutoffDate } });
             }
-        } catch (err) {
-            console.error(`Shard #${i + 1} Cleanup Error:`, err.message);
-        }
+        } catch (err) {}
     }
 }
 
 setInterval(cleanupOldSessions, 5 * 60 * 1000);
 DB_SHARDS.forEach((_, i) => getDatabase(i).catch(() => {}));
 
-// ==========================================
-// 🚀 SERVER CONFIG
-// ==========================================
-
 app.use(compression());
-app.use(express.static(path.join(__dirname, 'public'), { maxAge: '1h' }));
 app.use(express.json({ limit: '50kb' }));
 app.use(express.urlencoded({ extended: true, limit: '50kb' }));
-app.use(botGuard);
 
 // ==========================================
-// ⚡ ENDPOINTS
+// ⚡ CRITICAL: DEFINE PUBLIC ENDPOINTS BEFORE botGuard
 // ==========================================
 
-/**
- * 1. Process Session (Public) — called by the frontend JS on the /access/:sessionId page
- *
- * ✅ FIX: The flow is now:
- *   User clicks Download → /access/SESSION_ID page loads
- *   → Frontend calls this endpoint → gets back { short_url, telegram_url }
- *   → Frontend redirects user to short_url (the shortener)
- *   → Shortener completes → user lands on telegram_url = t.me/bot?start=main_id
- *   → Bot receives /start main_id → delivers file directly ✅
- *
- * Previously the session only stored short_url and NOT main_id/bot_username,
- * so after the shortener completed there was no way back to the file.
- */
-app.get('/api/process-session/:sessionId', rateLimiter, async (req, res) => {
+// Static files (public directory)
+app.use(express.static(path.join(__dirname, 'public'), { maxAge: '1h' }));
+
+// ✅ Server-side redirect endpoint - MUST be BEFORE botGuard
+app.get('/go/:sessionId', rateLimiter, async (req, res) => {
     const sessionId = req.params.sessionId;
 
     if (!/^[a-zA-Z0-9-_]+$/.test(sessionId)) {
-        return res.status(400).json({ success: false, message: 'Invalid session ID format.' });
+        return res.status(400).send('<h1>Invalid Link</h1>');
     }
-
-    const now = new Date();
 
     try {
         const shardIndex = getShardIndex(sessionId);
         const collection = await getDatabase(shardIndex);
-
-        // ✅ FIX: Do NOT mark as used yet — mark used only after redirect is confirmed
-        // This prevents the "link already used" problem when user retries
         const sessionData = await collection.findOne({ session_id: sessionId });
 
-        if (!sessionData) {
-            return res.json({ success: false, message: 'Invalid or missing session. Please click the bot link again.' });
+        if (!sessionData || !sessionData.short_url) {
+            console.log(`[/go] Session not found: ${sessionId}`);
+            return res.status(404).send('<h1>Link Not Found</h1><p>Please try clicking the download button again.</p>');
         }
 
-        // Check age (15 min max)
-        const ageSeconds = Math.floor((now.getTime() - new Date(sessionData.created_at).getTime()) / 1000);
+        const ageSeconds = Math.floor((Date.now() - new Date(sessionData.created_at).getTime()) / 1000);
         if (ageSeconds > 900) {
-            return res.json({ success: false, message: 'Link expired. Please request a new one from the bot.' });
+            console.log(`[/go] Session expired: ${sessionId}`);
+            return res.status(410).send('<h1>Link Expired</h1><p>Please request a new link from the bot.</p>');
         }
 
-        if (!sessionData.short_url) {
-            return res.json({ success: false, message: 'Session data incomplete. Please try again.' });
-        }
-
-        // ✅ FIX: Build the Telegram deep link using stored main_id + bot_username
-        // This is what the user lands on AFTER completing the shortener
-        let telegram_return_url = null;
-        if (sessionData.main_id && sessionData.bot_username) {
-            telegram_return_url = `https://t.me/${sessionData.bot_username}?start=${sessionData.main_id}`;
-        }
-
-        // Mark session as used now
+        // Mark as used
         await collection.updateOne(
             { session_id: sessionId },
-            { $set: { used: true, used_at: now } }
+            { $set: { used: true, used_at: new Date() } }
         );
 
-        console.log(`[Process Session] ✅ session=${sessionId}, short_url=${sessionData.short_url}, telegram_return=${telegram_return_url}`);
+        console.log(`[/go] ✅ Redirecting ${sessionId} → ${sessionData.short_url}`);
 
-        return res.json({
-            success: true,
-            // The shortener URL (user goes here first to complete the shortener)
-            short_url: sessionData.short_url,
-            // ✅ The Telegram deep link (shortener should redirect here after completion)
-            // Your frontend should pass this as the "return URL" to the shortener
-            telegram_return_url: telegram_return_url,
-            // Combined: redirect to shortener, which redirects to telegram_return_url
-            // If your shortener supports a custom return URL param, use that.
-            // Otherwise redirect_url = short_url (shortener already has telegram link baked in)
-            redirect_url: sessionData.short_url
-        });
+        // ✅ SERVER-SIDE REDIRECT
+        return res.redirect(302, sessionData.short_url);
 
     } catch (error) {
-        console.error('Processing Error:', error.message);
-        res.json({ success: false, message: 'Server busy. Please click again.' });
+        console.error('[/go] Error:', error.message);
+        return res.status(500).send('<h1>Server Error</h1><p>Please try again.</p>');
     }
 });
 
-/**
- * 2. Store Session (Private) — called by the Python bot
- *
- * ✅ FIX: Now accepts and stores main_id + bot_username
- * These are needed by process-session to build the Telegram return URL
- */
+// ✅ API endpoint to validate session - MUST be BEFORE botGuard
+app.get('/api/process-session/:sessionId', rateLimiter, async (req, res) => {
+    const sessionId = req.params.sessionId;
+
+    console.log(`[API] Processing session: ${sessionId}`);
+
+    if (!/^[a-zA-Z0-9-_]+$/.test(sessionId)) {
+        return res.json({ success: false, message: 'Invalid session ID.' });
+    }
+
+    try {
+        const shardIndex = getShardIndex(sessionId);
+        const collection = await getDatabase(shardIndex);
+        const sessionData = await collection.findOne({ session_id: sessionId });
+
+        if (!sessionData) {
+            console.log(`[API] Session not found: ${sessionId}`);
+            return res.json({ success: false, message: 'Session not found. Please try again.' });
+        }
+
+        const ageSeconds = Math.floor((Date.now() - new Date(sessionData.created_at).getTime()) / 1000);
+        if (ageSeconds > 900) {
+            console.log(`[API] Session expired: ${sessionId}`);
+            return res.json({ success: false, message: 'Link expired.' });
+        }
+
+        if (!sessionData.short_url) {
+            console.log(`[API] Session incomplete: ${sessionId}`);
+            return res.json({ success: false, message: 'Session incomplete.' });
+        }
+
+        console.log(`[API] ✅ Session valid: ${sessionId}`);
+
+        // ✅ Return success with redirect path
+        return res.json({
+            success: true,
+            redirect_path: `/go/${sessionId}`
+        });
+
+    } catch (error) {
+        console.error('[API] Error:', error.message);
+        return res.json({ success: false, message: 'Server error.' });
+    }
+});
+
+// ==========================================
+// 🛡️ NOW APPLY botGuard TO ALL OTHER ROUTES
+// ==========================================
+app.use(botGuard);
+
+// ==========================================
+// ⚡ PROTECTED ENDPOINTS (AFTER botGuard)
+// ==========================================
+
+// Store session endpoint (protected by API key)
 app.post('/api/store-session', async (req, res) => {
     const clientKey = req.headers['x-api-key'];
     if (clientKey !== API_SECRET_KEY) {
+        console.log('[Store] ❌ Invalid API key');
         return res.status(403).json({ success: false, message: 'Access Denied' });
     }
 
     const { session_id, short_url, user_id, main_id, bot_username } = req.body;
 
+    console.log(`[Store] Received: session=${session_id}, main_id=${main_id}, bot=${bot_username}`);
+
     if (!session_id || !short_url) {
-        return res.status(400).json({ success: false, message: 'Missing required fields: session_id, short_url' });
+        return res.status(400).json({ success: false, message: 'Missing fields' });
     }
 
-    if (!/^[a-zA-Z0-9-_]+$/.test(session_id)) {
-        return res.status(400).json({ success: false, message: 'Invalid Session ID characters' });
-    }
-
-    if (!isValidUrl(short_url)) {
-        return res.status(400).json({ success: false, message: 'Invalid URL format for short_url' });
-    }
-
-    // ✅ Validate main_id if provided
-    if (main_id && !/^[a-zA-Z0-9_-]+$/.test(main_id)) {
-        return res.status(400).json({ success: false, message: 'Invalid main_id format' });
+    if (!/^[a-zA-Z0-9-_]+$/.test(session_id) || !isValidUrl(short_url)) {
+        return res.status(400).json({ success: false, message: 'Invalid data' });
     }
 
     try {
@@ -286,7 +259,6 @@ app.post('/api/store-session', async (req, res) => {
                     session_id,
                     short_url,
                     user_id,
-                    // ✅ Store these so process-session can build the Telegram return URL
                     main_id: main_id || null,
                     bot_username: bot_username || null,
                     created_at: new Date(),
@@ -296,28 +268,25 @@ app.post('/api/store-session', async (req, res) => {
             { upsert: true }
         );
 
-        console.log(`[Store Session] ✅ Stored session=${session_id}, main_id=${main_id}`);
-        res.json({ success: true, message: 'Stored' });
+        console.log(`[Store] ✅ Stored session=${session_id}`);
+        return res.json({ success: true });
 
     } catch (error) {
-        console.error('Storage Error:', error.message);
-        res.status(500).json({ success: false });
+        console.error('[Store] Error:', error.message);
+        return res.status(500).json({ success: false });
     }
 });
 
-// 3. Static Routes
+// Static routes
 app.get('/access/:sessionId', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
-app.get('/health', (req, res) => res.json({
-    status: 'OK',
-    active_shards: collections.filter(c => c).length
-}));
+app.get('/health', (req, res) => res.json({ status: 'OK', shards: collections.filter(c => c).length }));
 
-// 4. 404 Handler
+// 404 Handler
 app.use((req, res) => res.status(404).sendFile(path.join(__dirname, 'public', 'index.html')));
 
 if (require.main === module) {
-    app.listen(PORT, () => console.log(`🚀 Secure Server running on port ${PORT}`));
+    app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
 }
 
 module.exports = app;
