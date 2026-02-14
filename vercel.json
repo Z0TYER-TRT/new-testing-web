@@ -3,7 +3,10 @@
   "builds": [
     {
       "src": "server.js",
-      "use": "@vercel/node"
+      "use": "@vercel/node",
+      "config": {
+        "maxDuration": 10
+      }
     }
   ],
   "routes": [
@@ -14,16 +17,45 @@
     },
     {
       "src": "/api/process-session/(.*)",
-      "dest": "/server.js?sessionId=$1",
+      "dest": "/server.js",
+      "methods": ["GET"]
+    },
+    {
+      "src": "/go/(.*)",
+      "dest": "/server.js",
       "methods": ["GET"]
     },
     {
       "src": "/access/(.*)",
+      "dest": "/server.js",
+      "methods": ["GET"]
+    },
+    {
+      "src": "/health",
+      "dest": "/server.js",
+      "methods": ["GET"]
+    },
+    {
+      "src": "/(.*\\.(css|js|ico|png|jpg|jpeg|svg|woff|woff2|ttf|eot))",
       "dest": "/server.js"
     },
     {
       "src": "/(.*)",
       "dest": "/server.js"
+    }
+  ],
+  "env": {
+    "NODE_ENV": "production"
+  },
+  "headers": [
+    {
+      "source": "/public/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=3600"
+        }
+      ]
     }
   ]
 }
