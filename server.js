@@ -28,7 +28,6 @@ const collections = [null, null, null];
 const connectionPromises = [null, null, null];
 
 // 🛡️ Security Middleware
-// frameguard: false is REQUIRED to allow your site to load the iframe internally
 app.use(helmet({ 
     contentSecurityPolicy: false,
     frameguard: false 
@@ -89,6 +88,8 @@ async function getDatabase(index) {
     if (collections[index]) return collections[index];
     if (connectionPromises[index]) return connectionPromises[index];
 
+    console.log(`[DB] Connecting to Shard #${index + 1}...`);
+
     connectionPromises[index] = (async () => {
         try {
             const client = new MongoClient(DB_SHARDS[index], {
@@ -106,10 +107,10 @@ async function getDatabase(index) {
 
             clients[index] = client;
             collections[index] = col;
-            console.log(`✅ Shard #${index + 1} Connected`);
+            console.log(`[DB] ✅ Shard #${index + 1} Connected`);
             return col;
         } catch (error) {
-            console.error(`❌ Shard #${index + 1} Failed:`, error.message);
+            console.error(`[DB] ❌ Shard #${index + 1} Failed:`, error.message);
             connectionPromises[index] = null;
             throw error;
         }
@@ -124,7 +125,8 @@ async function cleanupOldSessions() {
         try {
             const col = await getDatabase(i);
             if (col) {
-                await col.deleteMany({ created_at: { $lt: cutoffDate } });
+                const result = await col.deleteMany({ created_at: { $lt: cutoffDate } });
+                if(result.deletedCount > 0) console.log(`[DB] Cleaned ${result.deletedCount} old sessions from Shard #${i+1}`);
             }
         } catch (err) {}
     }
@@ -145,25 +147,31 @@ app.use(express.urlencoded({ extended: true, limit: '50kb' }));
 app.use(express.static(path.join(__dirname, 'public'), { maxAge: '1h' }));
 
 // ✅ 1. Session Validation API
-// Returns the ACTUAL shortener URL to be loaded in the iframe
 app.get('/api/process-session/:sessionId', rateLimiter, async (req, res) => {
     const sessionId = req.params.sessionId;
+    console.log(`[API] Process Session Request: ${sessionId}`);
 
     if (!/^[a-zA-Z0-9-_]+$/.test(sessionId)) {
+        console.log(`[API] Invalid Session ID format: ${sessionId}`);
         return res.json({ success: false, message: 'Invalid session ID.' });
     }
 
     try {
         const shardIndex = getShardIndex(sessionId);
+        console.log(`[API] Looking in Shard #${shardIndex + 1}`);
         const collection = await getDatabase(shardIndex);
+        
         const sessionData = await collection.findOne({ session_id: sessionId });
+        console.log(`[API] DB Result found: ${!!sessionData}`);
 
         if (!sessionData) {
+            console.log(`[API] ❌ Session not found: ${sessionId}`);
             return res.json({ success: false, message: 'Session not found.' });
         }
 
         const ageSeconds = Math.floor((Date.now() - new Date(sessionData.created_at).getTime()) / 1000);
         if (ageSeconds > 900) {
+            console.log(`[API] ❌ Session expired: ${sessionId}`);
             return res.json({ success: false, message: 'Link expired.' });
         }
 
@@ -171,7 +179,7 @@ app.get('/api/process-session/:sessionId', rateLimiter, async (req, res) => {
             return res.json({ success: false, message: 'Session incomplete.' });
         }
 
-        // Return the actual shortener URL for the iframe
+        console.log(`[API] ✅ Success. Returning URL.`);
         return res.json({
             success: true,
             target_url: sessionData.short_url
@@ -184,13 +192,12 @@ app.get('/api/process-session/:sessionId', rateLimiter, async (req, res) => {
 });
 
 // ✅ 2. The Cloaking Page Route
-// This serves the HTML page that contains the iframe
 app.get('/go/:sessionId', rateLimiter, (req, res) => {
     const sessionId = req.params.sessionId;
+    console.log(`[Page] Loading /go/${sessionId}`);
     if (!/^[a-zA-Z0-9-_]+$/.test(sessionId)) {
         return res.status(400).send('<h1>Invalid Link</h1>');
     }
-    // Serve the go.html file
     res.sendFile(path.join(__dirname, 'public', 'go.html'));
 });
 
@@ -206,18 +213,24 @@ app.use(botGuard);
 // Store Session (Protected by API Key)
 app.post('/api/store-session', async (req, res) => {
     const clientKey = req.headers['x-api-key'];
+    console.log(`[Store] Received request. API Key Match: ${clientKey === API_SECRET_KEY}`);
+    
     if (clientKey !== API_SECRET_KEY) {
+        console.log(`[Store] ❌ Access Denied`);
         return res.status(403).json({ success: false, message: 'Access Denied' });
     }
 
     const { session_id, short_url, user_id, main_id, bot_username } = req.body;
+    console.log(`[Store] Storing Session: ${session_id}, URL: ${short_url}`);
 
     if (!session_id || !short_url || !/^[a-zA-Z0-9-_]+$/.test(session_id) || !isValidUrl(short_url)) {
+        console.log(`[Store] ❌ Invalid Data`);
         return res.status(400).json({ success: false, message: 'Invalid data' });
     }
 
     try {
         const shardIndex = getShardIndex(session_id);
+        console.log(`[Store] Writing to Shard #${shardIndex + 1}`);
         const collection = await getDatabase(shardIndex);
 
         await collection.updateOne(
@@ -236,7 +249,7 @@ app.post('/api/store-session', async (req, res) => {
             { upsert: true }
         );
 
-        console.log(`[Store] ✅ Stored: ${session_id}`);
+        console.log(`[Store] ✅ Success: ${session_id}`);
         return res.json({ success: true });
 
     } catch (error) {
