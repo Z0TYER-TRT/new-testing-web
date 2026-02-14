@@ -2,7 +2,6 @@ const express = require('express');
 const path = require('path');
 const { MongoClient } = require('mongodb');
 const compression = require('compression');
-const crypto = require('crypto');
 const helmet = require('helmet');
 const cors = require('cors');
 
@@ -10,6 +9,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // 🔑 API Key for storing sessions
+// NOTE: It is recommended to use process.env.API_SECRET_KEY in production
 const API_SECRET_KEY = "Aniketsexvideo69";
 
 const BLOCKED_USER_AGENTS = ['curl', 'wget', 'python-requests', 'scrapy', 'bot', 'crawler', 'spider'];
@@ -27,20 +27,28 @@ const clients = [null, null, null];
 const collections = [null, null, null];
 const connectionPromises = [null, null, null];
 
+// Trust proxy is important for accurate rate limiting behind render/heroku/nginx
+app.set('trust proxy', 1);
+
 // 🛡️ Security Middleware
-app.use(helmet({ 
-    contentSecurityPolicy: false,
-    frameguard: false 
+app.use(helmet({
+    contentSecurityPolicy: false, // Disabled to allow inline scripts if needed
+    frameguard: false
 }));
 
 app.use(cors({ origin: true, methods: ['GET', 'POST'], allowedHeaders: ['Content-Type', 'x-api-key'] }));
+app.use(compression());
+app.use(express.json({ limit: '50kb' }));
+app.use(express.urlencoded({ extended: true, limit: '50kb' }));
 
 // --- RATE LIMITER ---
 const ipRequestCounts = new Map();
 function rateLimiter(req, res, next) {
-    const ip = req.headers['x-forwarded-for'] || req.connection.remoteAddress || 'unknown';
+    // Use req.ip if trust proxy is set, otherwise fallback to headers
+    const ip = req.ip || req.headers['x-forwarded-for']?.split(',')[0] || req.connection.remoteAddress || 'unknown';
     const now = Date.now();
 
+    // Random cleanup (10% chance) to prevent map bloat
     if (Math.random() < 0.1) {
         for (const [key, data] of ipRequestCounts) {
             if (now > data.resetTime) ipRequestCounts.delete(key);
@@ -48,6 +56,7 @@ function rateLimiter(req, res, next) {
     }
 
     const data = ipRequestCounts.get(ip) || { count: 0, resetTime: now + RATE_LIMIT_WINDOW };
+    
     if (now > data.resetTime) {
         data.count = 0;
         data.resetTime = now + RATE_LIMIT_WINDOW;
@@ -65,7 +74,10 @@ function rateLimiter(req, res, next) {
 // --- BOT GUARD ---
 function botGuard(req, res, next) {
     const userAgent = (req.get('User-Agent') || '').toLowerCase();
+    // Allow empty User-Agents (some privacy browsers) or block them? 
+    // The original code blocked them: if (!userAgent) return res.status(403)...
     if (!userAgent) return res.status(403).send('Access Denied');
+    
     if (BLOCKED_USER_AGENTS.some(bot => userAgent.includes(bot))) {
         return res.status(403).json({ success: false, message: 'Automated access detected' });
     }
@@ -78,9 +90,8 @@ function isValidUrl(string) {
 }
 
 // 🔧 FIXED SHARD INDEX: Always use Shard 0 (Cluster 0)
-// This ensures compatibility with data created by the "Old Server"
 function getShardIndex(sessionId) {
-    return 0; 
+    return 0;
 }
 
 // --- DATABASE CONNECTION ---
@@ -93,7 +104,7 @@ async function getDatabase(index) {
     connectionPromises[index] = (async () => {
         try {
             const client = new MongoClient(DB_SHARDS[index], {
-                maxPoolSize: 1,
+                maxPoolSize: 10, // Increased pool size slightly
                 serverSelectionTimeoutMS: 5000,
                 connectTimeoutMS: 10000,
             });
@@ -102,6 +113,7 @@ async function getDatabase(index) {
             const db = client.db('redirect_service');
             const col = db.collection('sessions');
 
+            // Create indexes (ignores errors if they exist)
             col.createIndex({ "session_id": 1 }, { unique: true }).catch(() => {});
             col.createIndex({ "created_at": 1 }, { expireAfterSeconds: 1800 }).catch(() => {});
 
@@ -111,7 +123,7 @@ async function getDatabase(index) {
             return col;
         } catch (error) {
             console.error(`[DB] ❌ Shard #${index + 1} Failed:`, error.message);
-            connectionPromises[index] = null;
+            connectionPromises[index] = null; // Reset promise to allow retry
             throw error;
         }
     })();
@@ -128,16 +140,16 @@ async function cleanupOldSessions() {
                 const result = await col.deleteMany({ created_at: { $lt: cutoffDate } });
                 if(result.deletedCount > 0) console.log(`[DB] Cleaned ${result.deletedCount} old sessions from Shard #${i+1}`);
             }
-        } catch (err) {}
+        } catch (err) {
+            console.error(`[DB] Cleanup error on Shard #${i+1}:`, err.message);
+        }
     }
 }
 
+// Run cleanup every 5 mins
 setInterval(cleanupOldSessions, 5 * 60 * 1000);
+// Init connections on startup
 DB_SHARDS.forEach((_, i) => getDatabase(i).catch(() => {}));
-
-app.use(compression());
-app.use(express.json({ limit: '50kb' }));
-app.use(express.urlencoded({ extended: true, limit: '50kb' }));
 
 // ==========================================
 // ⚡ PUBLIC ENDPOINTS (No BotGuard)
@@ -158,11 +170,9 @@ app.get('/api/process-session/:sessionId', rateLimiter, async (req, res) => {
 
     try {
         const shardIndex = getShardIndex(sessionId);
-        console.log(`[API] Looking in Shard #${shardIndex + 1}`);
         const collection = await getDatabase(shardIndex);
-        
+
         const sessionData = await collection.findOne({ session_id: sessionId });
-        console.log(`[API] DB Result found: ${!!sessionData}`);
 
         if (!sessionData) {
             console.log(`[API] ❌ Session not found: ${sessionId}`);
@@ -179,7 +189,7 @@ app.get('/api/process-session/:sessionId', rateLimiter, async (req, res) => {
             return res.json({ success: false, message: 'Session incomplete.' });
         }
 
-        console.log(`[API] ✅ Success. Returning URL.`);
+        console.log(`[API] ✅ Success. Returning URL: ${sessionData.short_url}`);
         return res.json({
             success: true,
             target_url: sessionData.short_url
@@ -213,10 +223,9 @@ app.use(botGuard);
 // Store Session (Protected by API Key)
 app.post('/api/store-session', async (req, res) => {
     const clientKey = req.headers['x-api-key'];
-    console.log(`[Store] Received request. API Key Match: ${clientKey === API_SECRET_KEY}`);
     
     if (clientKey !== API_SECRET_KEY) {
-        console.log(`[Store] ❌ Access Denied`);
+        console.log(`[Store] ❌ Access Denied (Key Mismatch)`);
         return res.status(403).json({ success: false, message: 'Access Denied' });
     }
 
@@ -230,7 +239,6 @@ app.post('/api/store-session', async (req, res) => {
 
     try {
         const shardIndex = getShardIndex(session_id);
-        console.log(`[Store] Writing to Shard #${shardIndex + 1}`);
         const collection = await getDatabase(shardIndex);
 
         await collection.updateOne(
@@ -242,8 +250,12 @@ app.post('/api/store-session', async (req, res) => {
                     user_id,
                     main_id: main_id || null,
                     bot_username: bot_username || null,
-                    created_at: new Date(),
                     used: false
+                },
+                // FIX: Only set created_at on insert, not on every update.
+                // This ensures the expiration logic (age > 900s) works correctly.
+                $setOnInsert: {
+                    created_at: new Date()
                 }
             },
             { upsert: true }
@@ -269,5 +281,4 @@ app.use((req, res) => res.status(404).sendFile(path.join(__dirname, 'public', 'i
 if (require.main === module) {
     app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
 }
-
 module.exports = app;
