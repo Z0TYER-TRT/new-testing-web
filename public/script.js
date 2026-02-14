@@ -10,14 +10,10 @@
     const statusMessage = document.getElementById('status-message');
     const progressBar = document.getElementById('progress');
     const countdownEl = document.getElementById('countdown');
-    const iframe = document.getElementById('cloaked-frame');
     const manualBtn = document.getElementById('manualRedirect');
 
     // Get Session ID from URL
     const sessionId = window.location.pathname.split('/').pop();
-
-    // Store the final redirect URL for the manual button
-    let finalRedirectUrl = '';
 
     function showSuccess() {
         if(loader) loader.style.display = 'none';
@@ -80,44 +76,16 @@
             const data = await res.json();
 
             if (data.success && data.redirect_path) {
-                // Construct the full URL for the iframe
-                const iframeSrc = data.redirect_path; // This is relative /go/xyz
-                // Construct absolute URL for manual button
-                finalRedirectUrl = window.location.origin + iframeSrc;
-
                 // SUCCESS
                 showSuccess();
                 if(title) title.textContent = "Access Granted";
                 if(message) message.textContent = "Redirecting...";
                 
-                // 3. CLOAKING MAGIC
+                // 3. REDIRECT LOGIC
+                // Instead of an iframe, we redirect the main window to the internal /go/ path
+                // This hides the actual shortener URL stored in the database.
                 setTimeout(() => {
-                    // Hide the verification UI
-                    document.querySelector('.container').style.display = 'none';
-                    
-                    // Show the iframe
-                    iframe.style.display = 'block';
-                    
-                    // Load the shortener URL inside the iframe
-                    iframe.src = iframeSrc; 
-
-                    // Setup Manual Button as a fallback (in case of iframe block)
-                    if(manualBtn) {
-                        manualBtn.style.display = 'block';
-                        manualBtn.textContent = "Open Content in New Tab";
-                        manualBtn.onclick = () => window.open(finalRedirectUrl, '_blank');
-                        
-                        // Move button to top right or keep it? 
-                        // Let's keep it hidden by default but available if needed.
-                        // For this design, we'll float it or just leave it accessible if the user goes back.
-                        // Better yet, append it to body so it floats over the iframe if needed.
-                        manualBtn.style.position = 'fixed';
-                        manualBtn.style.bottom = '20px';
-                        manualBtn.style.right = '20px';
-                        manualBtn.style.zIndex = '10000';
-                        document.body.appendChild(manualBtn);
-                    }
-
+                    window.location.href = data.redirect_path; 
                 }, 1000);
 
             } else {
