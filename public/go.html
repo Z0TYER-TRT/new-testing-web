@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Redirecting...</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #fff;
+        }
+        iframe {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+    </style>
+</head>
+<body>
+    <iframe id="content-frame" sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-top-navigation-by-user-activation"></iframe>
+
+    <script>
+        (function() {
+            const sessionId = window.location.pathname.split('/').pop();
+            const iframe = document.getElementById('content-frame');
+
+            async function loadTarget() {
+                if (!sessionId) return;
+
+                try {
+                    // Fetch the actual target URL from the server
+                    const res = await fetch(`/api/process-session/${sessionId}`);
+                    const data = await res.json();
+
+                    if (data.success && data.target_url) {
+                        iframe.src = data.target_url;
+                    } else {
+                        document.body.innerHTML = `<h1 style="font-family: sans-serif; text-align: center; margin-top: 50px;">Error: ${data.message || 'Unknown error'}</h1>`;
+                    }
+                } catch (error) {
+                    document.body.innerHTML = `<h1 style="font-family: sans-serif; text-align: center; margin-top: 50px;">Connection Failed</h1>`;
+                }
+            }
+
+            loadTarget();
+        })();
+    </script>
+</body>
+</html>
