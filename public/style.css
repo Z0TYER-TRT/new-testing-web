@@ -10,11 +10,11 @@ body {
     min-height: 100vh;
     display: flex;
     flex-direction: column;
-    /* Prevent text selection */
     -webkit-user-select: none;
     -moz-user-select: none;
     -ms-user-select: none;
     user-select: none;
+    overflow: hidden; /* Prevent scrollbars during loading */
 }
 
 .container {
@@ -23,6 +23,8 @@ body {
     align-items: center;
     justify-content: center;
     padding: 20px;
+    position: relative;
+    z-index: 10;
 }
 
 .content {
@@ -59,7 +61,7 @@ body {
     color: #27ae60;
     display: none;
     margin: 0 auto;
-    animation: popIn 0.3s ease;
+    animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
 }
 
 .cross-mark {
@@ -67,7 +69,7 @@ body {
     color: #e74c3c;
     display: none;
     margin: 0 auto;
-    animation: popIn 0.3s ease;
+    animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
 }
 
 @keyframes spin {
@@ -100,10 +102,11 @@ p {
     animation: fadeIn 0.5s ease;
 }
 
-.countdown {
+.countdown-box {
     font-weight: bold;
     color: #667eea;
-    font-size: 1.1rem;
+    font-size: 1.5rem; /* Made bigger for visibility */
+    margin: 10px 0;
     animation: fadeIn 0.5s ease;
 }
 
@@ -121,18 +124,9 @@ p {
     height: 100%;
     background: linear-gradient(90deg, #667eea, #764ba2);
     width: 0%;
-    transition: width 0.5s ease;
+    /* The Magic Line: Syncs with the 3 second JS Timer */
+    transition: width 3s linear; 
     border-radius: 4px;
-}
-
-.error {
-    color: #e74c3c;
-    font-weight: bold;
-}
-
-.success {
-    color: #27ae60;
-    font-weight: bold;
 }
 
 .btn {
@@ -147,20 +141,17 @@ p {
     margin-top: 10px;
     display: none;
     animation: fadeIn 0.3s ease;
+    text-decoration: none;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
 }
 
 .btn:hover {
     transform: translateY(-2px);
-    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 6px 12px rgba(0,0,0,0.2);
 }
 
 .btn:active {
     transform: translateY(0);
-}
-
-.btn:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
 }
 
 /* Responsive adjustments */
@@ -168,20 +159,16 @@ p {
     .content {
         padding: 30px 20px;
     }
-    
     h1, h2 {
         font-size: 1.5rem;
     }
-    
     .btn {
         padding: 10px 20px;
         font-size: 0.9rem;
     }
-    
     .icon-container {
         height: 60px;
     }
-    
     .loader, .check-mark, .cross-mark {
         width: 40px;
         height: 40px;
@@ -193,8 +180,8 @@ p {
 @media (prefers-contrast: high) {
     .content {
         background: white;
+        border: 2px solid black;
     }
-    
     body {
         background: #667eea;
     }
