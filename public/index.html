@@ -5,8 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Secure Access</title>
     <link rel="stylesheet" href="/style.css">
+    
+    <!-- Prevent caching -->
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    
+    <!-- SEO blocking -->
+    <meta name="robots" content="noindex, nofollow">
+    <meta name="referrer" content="no-referrer">
+    
     <style>
-        /* Full screen iframe styling */
+        /* ✅ FULL SCREEN IFRAME - SEAMLESS CLOAKING */
         #cloaked-frame {
             position: fixed;
             top: 0;
@@ -15,14 +25,66 @@
             height: 100%;
             border: none;
             z-index: 9999;
-            display: none; /* Hidden by default */
+            display: none;
             background: #fff;
+        }
+        
+        /* ✅ LOADING OVERLAY FOR IFRAME */
+        #iframe-loading {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 10000;
+            display: none;
+            text-align: center;
+            color: #667eea;
+            font-size: 18px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+        }
+        
+        #iframe-loading .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        /* ✅ PREVENT TEXT SELECTION */
+        body, * {
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
         }
     </style>
 </head>
 <body>
-    <iframe id="cloaked-frame" sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-top-navigation-by-user-activation"></iframe>
+    <!-- ✅ IFRAME FOR CLOAKING - Loads /go/:sessionId which fetches shortener server-side -->
+    <iframe 
+        id="cloaked-frame" 
+        sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-top-navigation allow-top-navigation-by-user-activation"
+        referrerpolicy="no-referrer">
+    </iframe>
+    
+    <!-- ✅ LOADING OVERLAY FOR IFRAME -->
+    <div id="iframe-loading">
+        <div class="spinner"></div>
+        <div>Processing redirect...</div>
+    </div>
 
+    <!-- ✅ VERIFICATION UI -->
     <div class="container">
         <div class="content">
             <div class="icon-container">
@@ -43,10 +105,28 @@
             </div>
             
             <p id="status-message">Initializing...</p>
-            <button id="manualRedirect" class="btn">Click to Continue</button>
+            <button id="manualRedirect" class="btn" style="display:none;">Click to Continue</button>
         </div>
     </div>
     
+    <!-- ✅ MAIN SCRIPT -->
     <script src="/script.js"></script>
+    
+    <!-- ✅ ADDITIONAL SECURITY -->
+    <script>
+        // Prevent console access
+        (function() {
+            const noop = () => {};
+            ['log', 'warn', 'error', 'info', 'debug'].forEach(method => {
+                console[method] = noop;
+            });
+        })();
+        
+        // Clear browser history entry after redirect
+        if (window.history.replaceState) {
+            window.history.replaceState(null, null, window.location.href);
+        }
+    </script>
 </body>
-</html>
+    </html>
+    
