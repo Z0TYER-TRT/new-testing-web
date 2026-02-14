@@ -1,9 +1,29 @@
 {
   "version": 2,
-  "rewrites": [
+  "builds": [
     {
-      "source": "/(.*)",
-      "destination": "/server.js"
+      "src": "server.js",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/store-session",
+      "dest": "/server.js",
+      "methods": ["POST"]
+    },
+    {
+      "src": "/api/process-session/(.*)",
+      "dest": "/server.js?sessionId=$1",
+      "methods": ["GET"]
+    },
+    {
+      "src": "/access/(.*)",
+      "dest": "/server.js"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/server.js"
     }
   ]
 }
