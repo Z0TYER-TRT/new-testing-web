@@ -5,8 +5,11 @@ const axios = require('axios');
 
 const app = express();
 
-// Configuration
-const API_SECRET_KEY = process.env.API_SECRET_KEY || "Aniketsexvideo69";
+// ==========================================
+// 🔐 HARDCODED CONFIGURATION (NO ENV VARS)
+// ==========================================
+const API_SECRET_KEY = "Aniketsexvideo69";
+
 const DB_SHARDS = [
     'mongodb+srv://redirect-kawaii:6pYMr5v6WznRduAL@cluster0.cqnnbgi.mongodb.net/redirect_service?appName=Cluster0',
     'mongodb+srv://redirect-kawaii2:HWoekNn54skXZ8GA@cluster1.gigfzvo.mongodb.net/redirect_service?appName=Cluster1',
@@ -16,12 +19,16 @@ const DB_SHARDS = [
 // Database cache
 let dbConnections = {};
 
-// Middleware
+// ==========================================
+// MIDDLEWARE
+// ==========================================
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Get database connection
+// ==========================================
+// DATABASE CONNECTION
+// ==========================================
 async function getDB(sessionId) {
     const shardIndex = parseInt(sessionId.charCodeAt(0)) % DB_SHARDS.length;
     
@@ -31,14 +38,15 @@ async function getDB(sessionId) {
     
     const client = new MongoClient(DB_SHARDS[shardIndex], {
         serverSelectionTimeoutMS: 3000,
-        connectTimeoutMS: 5000
+        connectTimeoutMS: 5000,
+        socketTimeoutMS: 5000
     });
     
     await client.connect();
     const db = client.db('redirect_service');
     const collection = db.collection('sessions');
     
-    // Create indexes
+    // Create indexes (fire and forget)
     collection.createIndex({ session_id: 1 }, { unique: true }).catch(() => {});
     collection.createIndex({ created_at: 1 }, { expireAfterSeconds: 1800 }).catch(() => {});
     
@@ -46,18 +54,29 @@ async function getDB(sessionId) {
     return collection;
 }
 
-// Routes
+// ==========================================
+// ROUTES
+// ==========================================
+
+// Health check
 app.get('/health', (req, res) => {
     res.json({ status: 'OK', time: Date.now() });
 });
 
+// Access page
 app.get('/access/:sessionId', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// Process session (returns redirect path, NOT shortener URL)
 app.get('/api/process-session/:sessionId', async (req, res) => {
     try {
         const { sessionId } = req.params;
+        
+        if (!/^[a-zA-Z0-9-_]+$/.test(sessionId)) {
+            return res.json({ success: false, message: 'Invalid session ID' });
+        }
+        
         const collection = await getDB(sessionId);
         const session = await collection.findOne({ session_id: sessionId });
         
@@ -65,28 +84,41 @@ app.get('/api/process-session/:sessionId', async (req, res) => {
             return res.json({ success: false, message: 'Session not found' });
         }
         
+        // Check age (15 minutes)
         const age = (Date.now() - new Date(session.created_at).getTime()) / 1000;
         if (age > 900) {
             return res.json({ success: false, message: 'Session expired' });
         }
         
+        // Return server redirect path (shortener URL stays hidden)
         res.json({
             success: true,
             redirect_path: `/go/${sessionId}`
         });
     } catch (error) {
+        console.error('[Process Session]', error.message);
         res.json({ success: false, message: 'Server error' });
     }
 });
 
+// Server-side redirect (fetches shortener URL invisibly)
 app.get('/go/:sessionId', async (req, res) => {
     try {
         const { sessionId } = req.params;
+        
+        if (!/^[a-zA-Z0-9-_]+$/.test(sessionId)) {
+            return res.status(400).send('Invalid session');
+        }
+        
         const collection = await getDB(sessionId);
         const session = await collection.findOne({ session_id: sessionId });
         
-        if (!session || session.used) {
-            return res.status(404).send('Session not found or expired');
+        if (!session || !session.short_url) {
+            return res.status(404).send('Session not found');
+        }
+        
+        if (session.used) {
+            return res.status(410).send('Link already used');
         }
         
         // Mark as used
@@ -96,62 +128,113 @@ app.get('/go/:sessionId', async (req, res) => {
         );
         
         const shortenerUrl = session.short_url;
+        console.log(`[Redirect] Processing: ${shortenerUrl}`);
+        
         let finalUrl = null;
         
-        // Try to fetch and extract destination
+        // Try to fetch shortener page (server-side, invisible to user)
         try {
             const response = await axios.get(shortenerUrl, {
                 timeout: 7000,
                 maxRedirects: 5,
                 headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                }
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+                },
+                validateStatus: (status) => status < 500
             });
             
-            // Check for redirect
-            if (response.request?.res?.responseUrl !== shortenerUrl) {
+            // Method 1: Direct redirect
+            if (response.request?.res?.responseUrl && response.request.res.responseUrl !== shortenerUrl) {
                 finalUrl = response.request.res.responseUrl;
             }
             
-            // Parse HTML for redirect
-            if (!finalUrl) {
+            // Method 2: Parse HTML
+            if (!finalUrl && response.data) {
                 const html = response.data;
-                const patterns = [
-                    /window\.location\.href\s*=\s*["']([^"']+)["']/i,
-                    /location\.href\s*=\s*["']([^"']+)["']/i,
-                    /<meta[^>]*content=["']?\d+;\s*url=([^"'>\s]+)/i
-                ];
                 
-                for (const pattern of patterns) {
-                    const match = html.match(pattern);
-                    if (match?.[1]) {
-                        finalUrl = match[1];
-                        break;
+                // Meta refresh
+                const metaMatch = html.match(/<meta[^>]*http-equiv=["']?refresh["']?[^>]*content=["']?\d+;\s*url=([^"'>\s]+)/i);
+                if (metaMatch?.[1]) {
+                    finalUrl = metaMatch[1];
+                }
+                
+                // JavaScript redirects
+                if (!finalUrl) {
+                    const patterns = [
+                        /window\.location\.href\s*=\s*["']([^"']+)["']/i,
+                        /window\.location\s*=\s*["']([^"']+)["']/i,
+                        /location\.href\s*=\s*["']([^"']+)["']/i,
+                        /location\.replace\(["']([^"']+)["']\)/i
+                    ];
+                    
+                    for (const pattern of patterns) {
+                        const match = html.match(pattern);
+                        if (match?.[1]) {
+                            finalUrl = match[1];
+                            break;
+                        }
+                    }
+                }
+                
+                // Variable patterns
+                if (!finalUrl) {
+                    const varPatterns = [
+                        /var\s+url\s*=\s*["']([^"']+)["']/i,
+                        /const\s+url\s*=\s*["']([^"']+)["']/i,
+                        /"url"\s*:\s*"([^"]+)"/i
+                    ];
+                    
+                    for (const pattern of varPatterns) {
+                        const match = html.match(pattern);
+                        if (match?.[1]?.startsWith('http')) {
+                            finalUrl = match[1];
+                            break;
+                        }
                     }
                 }
             }
-        } catch (err) {
-            console.log('Fetch error:', err.message);
+        } catch (axiosError) {
+            console.error('[Redirect] Axios error:', axiosError.message);
         }
         
-        // Fallback to Telegram
+        // Fallback to Telegram deep link
         if (!finalUrl && session.main_id && session.bot_username) {
             finalUrl = `https://t.me/${session.bot_username}?start=${session.main_id}`;
+            console.log(`[Redirect] Using Telegram fallback`);
         }
         
         if (!finalUrl) {
             return res.status(500).send('Redirect failed');
         }
         
+        console.log(`[Redirect] ✅ Final: ${finalUrl}`);
         res.redirect(302, finalUrl);
+        
     } catch (error) {
+        console.error('[Redirect] Error:', error.message);
+        
+        // Emergency fallback
+        try {
+            const collection = await getDB(req.params.sessionId);
+            const session = await collection.findOne({ session_id: req.params.sessionId });
+            
+            if (session?.main_id && session?.bot_username) {
+                return res.redirect(302, `https://t.me/${session.bot_username}?start=${session.main_id}`);
+            }
+        } catch (e) {
+            console.error('[Redirect] Fallback error:', e.message);
+        }
+        
         res.status(500).send('Server error');
     }
 });
 
+// Store session (called by bot)
 app.post('/api/store-session', async (req, res) => {
     try {
         const apiKey = req.headers['x-api-key'];
+        
         if (apiKey !== API_SECRET_KEY) {
             return res.status(403).json({ success: false, message: 'Access denied' });
         }
@@ -160,6 +243,10 @@ app.post('/api/store-session', async (req, res) => {
         
         if (!session_id || !short_url) {
             return res.status(400).json({ success: false, message: 'Missing fields' });
+        }
+        
+        if (!/^[a-zA-Z0-9-_]+$/.test(session_id)) {
+            return res.status(400).json({ success: false, message: 'Invalid session ID' });
         }
         
         const collection = await getDB(session_id);
@@ -179,16 +266,21 @@ app.post('/api/store-session', async (req, res) => {
             { upsert: true }
         );
         
+        console.log(`[Store] ✅ ${session_id}`);
         res.json({ success: true, message: 'Stored' });
+        
     } catch (error) {
+        console.error('[Store] Error:', error.message);
         res.status(500).json({ success: false, message: 'Storage error' });
     }
 });
 
+// Home page
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// 404 handler
 app.use((req, res) => {
     res.status(404).send('Not found');
 });
@@ -196,9 +288,8 @@ app.use((req, res) => {
 // Export for Vercel
 module.exports = app;
 
-// Local server
+// Local development
 if (require.main === module) {
-    const PORT = process.env.PORT || 3000;
-    app.listen(PORT, () => console.log(`Server on port ${PORT}`));
-    }
-                 
+    const PORT = 3000;
+    app.listen(PORT, () => console.log(`🚀 Server on port ${PORT}`));
+}
