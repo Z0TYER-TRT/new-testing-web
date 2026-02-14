@@ -1,14 +1,26 @@
 const express = require('express');
 const path = require('path');
 const { MongoClient } = require('mongodb');
+const compression = require('compression');
+const crypto = require('crypto');
+const helmet = require('helmet');
+const cors = require('cors');
 const axios = require('axios');
 
 const app = express();
+const PORT = process.env.PORT || 3000;
+
+// ✅ FIX: Vercel-compatible directory resolution
+const __dirname = process.cwd();
 
 // ==========================================
-// 🔐 HARDCODED CONFIGURATION (NO ENV VARS)
+// 🔐 SECURITY CONFIGURATION
 // ==========================================
 const API_SECRET_KEY = "Aniketsexvideo69";
+
+const BLOCKED_USER_AGENTS = ['curl', 'wget', 'python-requests', 'scrapy', 'bot', 'crawler', 'spider'];
+const RATE_LIMIT_WINDOW = 60000;
+const MAX_REQUESTS_PER_IP = 100;
 
 const DB_SHARDS = [
     'mongodb+srv://redirect-kawaii:6pYMr5v6WznRduAL@cluster0.cqnnbgi.mongodb.net/redirect_service?appName=Cluster0',
@@ -16,159 +28,206 @@ const DB_SHARDS = [
     'mongodb+srv://redirect-kawaii3:wiCwqRkusOUoSX8J@cluster2.brkkpuv.mongodb.net/redirect_service?appName=Cluster2'
 ];
 
-// Database cache
-let dbConnections = {};
+// Connection State
+const clients = [null, null, null];
+const collections = [null, null, null];
+const connectionPromises = [null, null, null];
 
 // ==========================================
-// MIDDLEWARE
+// 🛡️ SECURITY MIDDLEWARE
 // ==========================================
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-app.use(express.static(path.join(__dirname, 'public')));
 
-// ==========================================
-// DATABASE CONNECTION
-// ==========================================
-async function getDB(sessionId) {
-    const shardIndex = parseInt(sessionId.charCodeAt(0)) % DB_SHARDS.length;
+app.use(helmet({ 
+    contentSecurityPolicy: false,
+    frameguard: false
+}));
+
+app.use(cors({
+    origin: true,
+    methods: ['GET', 'POST'],
+    allowedHeaders: ['Content-Type', 'x-api-key']
+}));
+
+const ipRequestCounts = new Map();
+function rateLimiter(req, res, next) {
+    const ip = req.headers['x-forwarded-for']?.split(',')[0].trim() || 
+               req.headers['x-real-ip'] ||
+               req.connection.remoteAddress || 
+               'unknown';
+    const now = Date.now();
+
+    // Periodic cleanup
+    if (Math.random() < 0.05) {
+        for (const [key, data] of ipRequestCounts) {
+            if (now > data.resetTime) ipRequestCounts.delete(key);
+        }
+    }
+
+    const data = ipRequestCounts.get(ip) || { count: 0, resetTime: now + RATE_LIMIT_WINDOW };
+    if (now > data.resetTime) {
+        data.count = 0;
+        data.resetTime = now + RATE_LIMIT_WINDOW;
+    }
+
+    data.count++;
+    ipRequestCounts.set(ip, data);
+
+    if (data.count > MAX_REQUESTS_PER_IP) {
+        console.log(`⛔ Rate limit: ${ip}`);
+        return res.status(429).json({ success: false, message: 'Too many requests. Please wait.' });
+    }
+    next();
+}
+
+function botGuard(req, res, next) {
+    const userAgent = (req.get('User-Agent') || '').toLowerCase();
     
-    if (dbConnections[shardIndex]) {
-        return dbConnections[shardIndex];
+    // Allow empty user-agent for iframes and some mobile browsers
+    if (!userAgent && req.path.includes('/go/')) {
+        return next();
     }
     
-    const client = new MongoClient(DB_SHARDS[shardIndex], {
-        serverSelectionTimeoutMS: 3000,
-        connectTimeoutMS: 5000,
-        socketTimeoutMS: 5000
-    });
-    
-    await client.connect();
-    const db = client.db('redirect_service');
-    const collection = db.collection('sessions');
-    
-    // Create indexes (fire and forget)
-    collection.createIndex({ session_id: 1 }, { unique: true }).catch(() => {});
-    collection.createIndex({ created_at: 1 }, { expireAfterSeconds: 1800 }).catch(() => {});
-    
-    dbConnections[shardIndex] = collection;
-    return collection;
+    if (BLOCKED_USER_AGENTS.some(bot => userAgent.includes(bot))) {
+        return res.status(403).json({ success: false, message: 'Access Denied' });
+    }
+    next();
+}
+
+function isValidUrl(string) {
+    try { new URL(string); return true; } catch (_) { return false; }
 }
 
 // ==========================================
-// ROUTES
+// 🗄️ DATABASE LOGIC
 // ==========================================
 
-// Health check
-app.get('/health', (req, res) => {
-    res.json({ status: 'OK', time: Date.now() });
-});
+function getShardIndex(sessionId) {
+    if (!sessionId) return 0;
+    const hash = crypto.createHash('md5').update(sessionId).digest('hex');
+    return parseInt(hash.substring(0, 8), 16) % DB_SHARDS.length;
+}
 
-// Access page
-app.get('/access/:sessionId', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
+async function getDatabase(index) {
+    if (collections[index]) return collections[index];
+    if (connectionPromises[index]) return connectionPromises[index];
 
-// Process session (returns redirect path, NOT shortener URL)
-app.get('/api/process-session/:sessionId', async (req, res) => {
-    try {
-        const { sessionId } = req.params;
-        
-        if (!/^[a-zA-Z0-9-_]+$/.test(sessionId)) {
-            return res.json({ success: false, message: 'Invalid session ID' });
+    connectionPromises[index] = (async () => {
+        try {
+            const client = new MongoClient(DB_SHARDS[index], {
+                serverSelectionTimeoutMS: 5000,
+                connectTimeoutMS: 5000,
+                socketTimeoutMS: 5000,
+                maxPoolSize: 1,
+                minPoolSize: 0,
+                maxIdleTimeMS: 10000
+            });
+
+            await client.connect();
+            const db = client.db('redirect_service');
+            const col = db.collection('sessions');
+
+            // Create indexes without waiting
+            col.createIndex({ "session_id": 1 }, { unique: true }).catch(() => {});
+            col.createIndex({ "created_at": 1 }, { expireAfterSeconds: 1800 }).catch(() => {});
+
+            clients[index] = client;
+            collections[index] = col;
+            console.log(`✅ Shard #${index + 1} connected`);
+            return col;
+        } catch (error) {
+            console.error(`❌ Shard #${index + 1} error:`, error.message);
+            connectionPromises[index] = null;
+            throw error;
         }
-        
-        const collection = await getDB(sessionId);
-        const session = await collection.findOne({ session_id: sessionId });
-        
-        if (!session) {
-            return res.json({ success: false, message: 'Session not found' });
-        }
-        
-        // Check age (15 minutes)
-        const age = (Date.now() - new Date(session.created_at).getTime()) / 1000;
-        if (age > 900) {
-            return res.json({ success: false, message: 'Session expired' });
-        }
-        
-        // Return server redirect path (shortener URL stays hidden)
-        res.json({
-            success: true,
-            redirect_path: `/go/${sessionId}`
-        });
-    } catch (error) {
-        console.error('[Process Session]', error.message);
-        res.json({ success: false, message: 'Server error' });
+    })();
+
+    return connectionPromises[index];
+}
+
+// ==========================================
+// 🚀 SERVER CONFIG
+// ==========================================
+
+app.use(compression());
+app.use(express.static(path.join(__dirname, 'public'), { maxAge: '1h' }));
+app.use(express.json({ limit: '50kb' }));
+app.use(express.urlencoded({ extended: true, limit: '50kb' }));
+
+app.use('/api/store-session', botGuard);
+
+// ==========================================
+// ⚡ ENDPOINTS
+// ==========================================
+
+app.get('/go/:sessionId', rateLimiter, async (req, res) => {
+    const sessionId = req.params.sessionId;
+
+    if (!/^[a-zA-Z0-9-_]+$/.test(sessionId)) {
+        return res.status(400).send('Invalid session ID');
     }
-});
 
-// Server-side redirect (fetches shortener URL invisibly)
-app.get('/go/:sessionId', async (req, res) => {
     try {
-        const { sessionId } = req.params;
-        
-        if (!/^[a-zA-Z0-9-_]+$/.test(sessionId)) {
-            return res.status(400).send('Invalid session');
-        }
-        
-        const collection = await getDB(sessionId);
-        const session = await collection.findOne({ session_id: sessionId });
-        
-        if (!session || !session.short_url) {
+        const shardIndex = getShardIndex(sessionId);
+        const collection = await getDatabase(shardIndex);
+        const sessionData = await collection.findOne({ session_id: sessionId });
+
+        if (!sessionData || !sessionData.short_url) {
             return res.status(404).send('Session not found');
         }
-        
-        if (session.used) {
+
+        if (sessionData.used) {
             return res.status(410).send('Link already used');
         }
-        
+
         // Mark as used
         await collection.updateOne(
             { session_id: sessionId },
             { $set: { used: true, used_at: new Date() } }
         );
-        
-        const shortenerUrl = session.short_url;
+
+        const shortenerUrl = sessionData.short_url;
         console.log(`[Redirect] Processing: ${shortenerUrl}`);
-        
+
         let finalUrl = null;
-        
-        // Try to fetch shortener page (server-side, invisible to user)
+
         try {
-            const response = await axios.get(shortenerUrl, {
-                timeout: 7000,
-                maxRedirects: 5,
+            const shortenerResponse = await axios.get(shortenerUrl, {
                 headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+                    'User-Agent': req.get('User-Agent') || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.9',
                 },
+                maxRedirects: 5,
+                timeout: 8000,
                 validateStatus: (status) => status < 500
             });
-            
+
             // Method 1: Direct redirect
-            if (response.request?.res?.responseUrl && response.request.res.responseUrl !== shortenerUrl) {
-                finalUrl = response.request.res.responseUrl;
+            if (shortenerResponse.request?.res?.responseUrl && 
+                shortenerResponse.request.res.responseUrl !== shortenerUrl) {
+                finalUrl = shortenerResponse.request.res.responseUrl;
             }
-            
+
             // Method 2: Parse HTML
-            if (!finalUrl && response.data) {
-                const html = response.data;
+            if (!finalUrl && shortenerResponse.data) {
+                const html = shortenerResponse.data;
                 
                 // Meta refresh
                 const metaMatch = html.match(/<meta[^>]*http-equiv=["']?refresh["']?[^>]*content=["']?\d+;\s*url=([^"'>\s]+)/i);
                 if (metaMatch?.[1]) {
                     finalUrl = metaMatch[1];
                 }
-                
+
                 // JavaScript redirects
                 if (!finalUrl) {
-                    const patterns = [
+                    const jsPatterns = [
                         /window\.location\.href\s*=\s*["']([^"']+)["']/i,
                         /window\.location\s*=\s*["']([^"']+)["']/i,
                         /location\.href\s*=\s*["']([^"']+)["']/i,
-                        /location\.replace\(["']([^"']+)["']\)/i
+                        /location\.replace\(["']([^"']+)["']\)/i,
                     ];
                     
-                    for (const pattern of patterns) {
+                    for (const pattern of jsPatterns) {
                         const match = html.match(pattern);
                         if (match?.[1]) {
                             finalUrl = match[1];
@@ -176,13 +235,13 @@ app.get('/go/:sessionId', async (req, res) => {
                         }
                     }
                 }
-                
+
                 // Variable patterns
                 if (!finalUrl) {
                     const varPatterns = [
                         /var\s+url\s*=\s*["']([^"']+)["']/i,
                         /const\s+url\s*=\s*["']([^"']+)["']/i,
-                        /"url"\s*:\s*"([^"]+)"/i
+                        /"url"\s*:\s*"([^"]+)"/i,
                     ];
                     
                     for (const pattern of varPatterns) {
@@ -197,61 +256,106 @@ app.get('/go/:sessionId', async (req, res) => {
         } catch (axiosError) {
             console.error('[Redirect] Axios error:', axiosError.message);
         }
-        
+
         // Fallback to Telegram deep link
-        if (!finalUrl && session.main_id && session.bot_username) {
-            finalUrl = `https://t.me/${session.bot_username}?start=${session.main_id}`;
-            console.log(`[Redirect] Using Telegram fallback`);
+        if (!finalUrl && sessionData.main_id && sessionData.bot_username) {
+            finalUrl = `https://t.me/${sessionData.bot_username}?start=${sessionData.main_id}`;
+            console.log(`[Redirect] Using fallback: ${finalUrl}`);
         }
-        
-        if (!finalUrl) {
+
+        if (!finalUrl || !isValidUrl(finalUrl)) {
+            console.error('[Redirect] No valid URL found');
             return res.status(500).send('Redirect failed');
         }
-        
-        console.log(`[Redirect] ✅ Final: ${finalUrl}`);
+
+        console.log(`[Redirect] ✅ Destination: ${finalUrl}`);
         res.redirect(302, finalUrl);
-        
+
     } catch (error) {
         console.error('[Redirect] Error:', error.message);
         
         // Emergency fallback
         try {
-            const collection = await getDB(req.params.sessionId);
-            const session = await collection.findOne({ session_id: req.params.sessionId });
+            const shardIndex = getShardIndex(sessionId);
+            const collection = await getDatabase(shardIndex);
+            const sessionData = await collection.findOne({ session_id: sessionId });
             
-            if (session?.main_id && session?.bot_username) {
-                return res.redirect(302, `https://t.me/${session.bot_username}?start=${session.main_id}`);
+            if (sessionData?.main_id && sessionData?.bot_username) {
+                const fallbackUrl = `https://t.me/${sessionData.bot_username}?start=${sessionData.main_id}`;
+                return res.redirect(302, fallbackUrl);
             }
-        } catch (e) {
-            console.error('[Redirect] Fallback error:', e.message);
+        } catch (fallbackError) {
+            console.error('[Redirect] Fallback error:', fallbackError.message);
         }
         
-        res.status(500).send('Server error');
+        res.status(500).send('Service temporarily unavailable');
     }
 });
 
-// Store session (called by bot)
-app.post('/api/store-session', async (req, res) => {
+app.get('/api/process-session/:sessionId', rateLimiter, async (req, res) => {
+    const sessionId = req.params.sessionId;
+
+    if (!/^[a-zA-Z0-9-_]+$/.test(sessionId)) {
+        return res.status(400).json({ success: false, message: 'Invalid session ID' });
+    }
+
     try {
-        const apiKey = req.headers['x-api-key'];
-        
-        if (apiKey !== API_SECRET_KEY) {
-            return res.status(403).json({ success: false, message: 'Access denied' });
+        const shardIndex = getShardIndex(sessionId);
+        const collection = await getDatabase(shardIndex);
+        const sessionData = await collection.findOne({ session_id: sessionId });
+
+        if (!sessionData) {
+            return res.json({ success: false, message: 'Session not found' });
         }
-        
-        const { session_id, short_url, user_id, main_id, bot_username } = req.body;
-        
-        if (!session_id || !short_url) {
-            return res.status(400).json({ success: false, message: 'Missing fields' });
+
+        // Check age (15 min)
+        const ageSeconds = Math.floor((Date.now() - new Date(sessionData.created_at).getTime()) / 1000);
+        if (ageSeconds > 900) {
+            return res.json({ success: false, message: 'Session expired' });
         }
-        
-        if (!/^[a-zA-Z0-9-_]+$/.test(session_id)) {
-            return res.status(400).json({ success: false, message: 'Invalid session ID' });
+
+        if (!sessionData.short_url) {
+            return res.json({ success: false, message: 'Invalid session data' });
         }
-        
-        const collection = await getDB(session_id);
+
+        return res.json({
+            success: true,
+            redirect_path: `/go/${sessionId}`,
+            message: 'Session verified'
+        });
+
+    } catch (error) {
+        console.error('[Session] Error:', error.message);
+        res.json({ success: false, message: 'Server error' });
+    }
+});
+
+app.post('/api/store-session', async (req, res) => {
+    const clientKey = req.headers['x-api-key'];
+    if (clientKey !== API_SECRET_KEY) {
+        return res.status(403).json({ success: false, message: 'Access Denied' });
+    }
+
+    const { session_id, short_url, user_id, main_id, bot_username } = req.body;
+
+    if (!session_id || !short_url) {
+        return res.status(400).json({ success: false, message: 'Missing fields' });
+    }
+
+    if (!/^[a-zA-Z0-9-_]+$/.test(session_id)) {
+        return res.status(400).json({ success: false, message: 'Invalid session ID' });
+    }
+
+    if (!isValidUrl(short_url)) {
+        return res.status(400).json({ success: false, message: 'Invalid URL' });
+    }
+
+    try {
+        const shardIndex = getShardIndex(session_id);
+        const collection = await getDatabase(shardIndex);
+
         await collection.updateOne(
-            { session_id },
+            { session_id: session_id },
             {
                 $set: {
                     session_id,
@@ -265,31 +369,30 @@ app.post('/api/store-session', async (req, res) => {
             },
             { upsert: true }
         );
-        
+
         console.log(`[Store] ✅ ${session_id}`);
         res.json({ success: true, message: 'Stored' });
-        
+
     } catch (error) {
         console.error('[Store] Error:', error.message);
         res.status(500).json({ success: false, message: 'Storage error' });
     }
 });
 
-// Home page
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
+// Static Routes
+app.get('/access/:sessionId', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+app.get('/health', (req, res) => res.json({ status: 'OK', timestamp: Date.now() }));
 
-// 404 handler
-app.use((req, res) => {
-    res.status(404).send('Not found');
-});
+// 404 Handler
+app.use((req, res) => res.status(404).sendFile(path.join(__dirname, 'public', 'index.html')));
 
-// Export for Vercel
+// ✅ VERCEL EXPORT
 module.exports = app;
 
-// Local development
+// Only listen if not in Vercel
 if (require.main === module) {
-    const PORT = 3000;
-    app.listen(PORT, () => console.log(`🚀 Server on port ${PORT}`));
+    app.listen(PORT, () => {
+        console.log(`🚀 Server running on port ${PORT}`);
+    });
 }
