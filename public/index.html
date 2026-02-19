@@ -2,51 +2,85 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Secure Access</title>
-    <link rel="stylesheet" href="/style.css">
-    <style>
-        /* Full screen iframe styling */
-        #cloaked-frame {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            border: none;
-            z-index: 9999;
-            display: none; /* Hidden by default */
-            background: #fff;
-        }
-    </style>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="referrer" content="no-referrer">
+    <meta http-equiv="X-Content-Type-Options" content="nosniff">
+    <meta name="theme-color" content="#1a1a2e">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="format-detection" content="telephone=no">
+    
+    <title>🔐 Secure Access</title>
+    <link rel="stylesheet" href="/style.css?v=12">
+    
+    <!-- SVG Gradient Definition -->
+    <svg style="position: absolute; width: 0; height: 0;">
+        <defs>
+            <linearGradient id="shieldGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:#667eea;stop-opacity:1" />
+                <stop offset="50%" style="stop-color:#764ba2;stop-opacity:1" />
+                <stop offset="100%" style="stop-color:#667eea;stop-opacity:1" />
+            </linearGradient>
+        </defs>
+    </svg>
 </head>
 <body>
-    <iframe id="cloaked-frame" sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-top-navigation-by-user-activation"></iframe>
-
-    <div class="container">
+    <div class="container" id="mainContainer">
         <div class="content">
+            <!-- Icon Container - FIXED LAYOUT -->
             <div class="icon-container">
-                <div class="loader" id="loader"></div>
+                <!-- Security Shield Icon - TOP -->
+                <div class="shield-wrapper" id="shieldWrapper">
+                    <div class="shield-icon" id="shieldIcon">
+                        <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+                            <path class="shield-body" d="M50 5 L20 18 V45 C20 65 35 85 50 92 C65 85 80 65 80 45 V18 L50 5 Z"/>
+                            <path class="shield-check" d="M35 50 L48 63 L65 40"/>
+                        </svg>
+                    </div>
+                </div>
+                
+                <!-- Loader - BOTTOM (Under Shield) -->
+                <div class="loader-wrapper" id="loaderWrapper">
+                    <div class="loader" id="loader"></div>
+                </div>
+                
+                <!-- Check Mark - BOTTOM (Replaces Loader) -->
                 <div class="check-mark" id="checkMark">✓</div>
+                
+                <!-- Cross Mark - BOTTOM (Replaces Loader) -->
                 <div class="cross-mark" id="crossMark">✗</div>
             </div>
             
+            <!-- Title -->
             <h2 id="title">🛡️ Security Check</h2>
-            <p id="message">Verifying session...</p>
             
-            <div class="countdown-box">
+            <!-- Message -->
+            <p id="message">Verifying your session...</p>
+            
+            <!-- Countdown Box -->
+            <div class="countdown-box" id="countdownBox">
                 <span id="countdown">3</span> seconds remaining
             </div>
 
-            <div class="progress-bar">
+            <!-- Progress Bar -->
+            <div class="progress-bar" id="progressBar">
                 <div class="progress" id="progress"></div>
             </div>
             
-            <p id="status-message">Initializing...</p>
-            <button id="manualRedirect" class="btn">Click to Continue</button>
+            <!-- Status Message -->
+            <p id="status-message">Connecting...</p>
+            
+            <!-- Security Badge -->
+            <div class="security-badge">
+                <svg class="lock-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M12 2C9.243 2 7 4.243 7 7V10H6C4.897 10 4 10.897 4 12V20C4 21.103 4.897 22 6 22H18C19.103 22 20 21.103 20 20V12C20 10.897 19.103 10 18 10H17V7C17 4.243 14.757 2 12 2ZM12 4C13.654 4 15 5.346 15 7V10H9V7C9 5.346 10.346 4 12 4ZM12 14C13.103 14 14 14.897 14 16C14 17.103 13.103 18 12 18C10.897 18 10 17.103 10 16C10 14.897 10.897 14 12 14Z"/>
+                </svg>
+                <span>256-bit SSL Encrypted</span>
+            </div>
         </div>
     </div>
     
-    <script src="/script.js"></script>
+    <script src="/script.js?v=12"></script>
 </body>
 </html>
