@@ -23,7 +23,7 @@ const MAX_REQUESTS_PER_IP = 100;
 
 // 🗄️ Database Shards
 const DB_SHARDS = [
-    'mongodb+srv://testing-web:V9EybCvxkH9tBAUW@cluster4.wt2x19f.mongodb.net/redirect-service?appName=Cluster4',
+    'mongodb+srv://redirect-kawaii:6pYMr5v6WznRduAL@cluster0.cqnnbgi.mongodb.net/redirect_service?appName=Cluster0',
     'mongodb+srv://redirect-kawaii2:HWoekNn54skXZ8GA@cluster1.gigfzvo.mongodb.net/redirect_service?appName=Cluster1',
     'mongodb+srv://redirect-kawaii3:wiCwqRkusOUoSX8J@cluster2.brkkpuv.mongodb.net/redirect_service?appName=Cluster2'
 ];
