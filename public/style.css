@@ -1,4 +1,3 @@
-
 * {
     margin: 0;
     padding: 0;
@@ -14,6 +13,7 @@ body {
     min-height: 100vh;
     padding: 20px;
     color: #fff;
+    overflow-x: hidden;
 }
 
 .container {
@@ -24,7 +24,9 @@ body {
     text-align: center;
     width: 100%;
     max-width: 380px;
-    animation: fadeIn 0.4s ease-out;
+    animation: fadeIn 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
 }
 
 @keyframes fadeIn {
@@ -38,7 +40,6 @@ body {
     align-items: center;
 }
 
-/* Icon Container - FIXED LAYOUT */
 .icon-container {
     position: relative;
     width: 100px;
@@ -50,7 +51,6 @@ body {
     align-items: center;
 }
 
-/* Security Shield Icon - TOP POSITION */
 .shield-wrapper {
     width: 80px;
     height: 80px;
@@ -95,7 +95,6 @@ body {
     to { stroke-dashoffset: 0; }
 }
 
-/* Loader - BOTTOM POSITION (Under Shield) */
 .loader-wrapper {
     width: 50px;
     height: 50px;
@@ -118,12 +117,11 @@ body {
     100% { transform: rotate(360deg); }
 }
 
-/* Check Mark - BOTTOM POSITION (Replaces Loader) */
-.check-mark {
+.check-mark,
+.cross-mark {
     display: none;
     width: 45px;
     height: 45px;
-    background: linear-gradient(135deg, #00b894 0%, #00cec9 100%);
     border-radius: 50%;
     justify-content: center;
     align-items: center;
@@ -131,10 +129,22 @@ body {
     color: #fff;
     font-weight: bold;
     animation: checkPop 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.check-mark {
+    background: linear-gradient(135deg, #00b894 0%, #00cec9 100%);
     box-shadow: 0 10px 30px rgba(0, 184, 148, 0.5);
 }
 
-.check-mark.show {
+.cross-mark {
+    background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+    box-shadow: 0 10px 30px rgba(231, 76, 60, 0.5);
+}
+
+.check-mark.show,
+.cross-mark.show {
     display: flex;
 }
 
@@ -143,35 +153,14 @@ body {
     100% { transform: scale(1) rotate(0deg); opacity: 1; }
 }
 
-/* Cross Mark - BOTTOM POSITION (Replaces Loader) */
-.cross-mark {
-    display: none;
-    width: 45px;
-    height: 45px;
-    background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
-    border-radius: 50%;
-    justify-content: center;
-    align-items: center;
-    font-size: 28px;
-    color: #fff;
-    font-weight: bold;
-    animation: checkPop 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55);
-    box-shadow: 0 10px 30px rgba(231, 76, 60, 0.5);
-}
-
-.cross-mark.show {
-    display: flex;
-}
-
-/* Title */
 h2 {
     font-size: 22px;
     font-weight: 700;
     margin-bottom: 10px;
     color: #fff;
+    transition: color 0.3s ease;
 }
 
-/* Message */
 #message {
     font-size: 14px;
     color: rgba(255, 255, 255, 0.75);
@@ -180,7 +169,36 @@ h2 {
     min-height: 20px;
 }
 
-/* Countdown Box */
+.click-btn {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: #fff;
+    border: none;
+    padding: 14px 32px;
+    font-size: 16px;
+    font-weight: 600;
+    border-radius: 12px;
+    cursor: pointer;
+    margin: 15px 0;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+    display: inline-block;
+}
+
+.click-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+}
+
+.click-btn:active {
+    transform: translateY(0) scale(0.98);
+}
+
+.click-btn:disabled {
+    background: linear-gradient(135deg, #00b894 0%, #00cec9 100%);
+    cursor: not-allowed;
+    transform: none;
+}
+
 .countdown-box {
     background: rgba(102, 126, 234, 0.2);
     border: 1px solid rgba(102, 126, 234, 0.3);
@@ -190,6 +208,12 @@ h2 {
     font-weight: 600;
     font-size: 16px;
     color: #a5b4fc;
+    animation: pulse 1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.02); }
 }
 
 #countdown {
@@ -199,7 +223,6 @@ h2 {
     margin-right: 6px;
 }
 
-/* Progress Bar */
 .progress-bar {
     width: 100%;
     height: 5px;
@@ -207,6 +230,7 @@ h2 {
     border-radius: 8px;
     overflow: hidden;
     margin-bottom: 18px;
+    display: none;
 }
 
 .progress {
@@ -216,14 +240,13 @@ h2 {
     border-radius: 8px;
 }
 
-/* Status Message */
 #status-message {
     font-size: 12px;
     color: rgba(255, 255, 255, 0.5);
     min-height: 18px;
+    transition: all 0.3s ease;
 }
 
-/* Security Badge */
 .security-badge {
     display: flex;
     align-items: center;
@@ -244,74 +267,42 @@ h2 {
     fill: currentColor;
 }
 
-/* Success State */
 .container.success h2 {
     color: #00b894;
 }
 
-/* Error State */
 .container.error h2 {
     color: #e74c3c;
 }
 
-/* iOS Safari Fixes */
 @supports (-webkit-touch-callout: none) {
     .container {
         -webkit-transform: translateZ(0);
         transform: translateZ(0);
     }
-    
     .loader {
         -webkit-animation: spin 0.8s linear infinite;
     }
-    
     .shield-wrapper {
         -webkit-animation: shieldFloat 3s ease-in-out infinite;
     }
 }
 
-/* Low-End Device Mode */
 @media (prefers-reduced-motion: reduce) {
-    *,
-    *::before,
-    *::after {
+    *, *::before, *::after {
         animation-duration: 0.01ms !important;
         animation-iteration-count: 1 !important;
         transition-duration: 0.01ms !important;
     }
 }
 
-/* Responsive */
 @media (max-width: 400px) {
-    .container {
-        padding: 28px 20px;
-    }
-    
-    h2 {
-        font-size: 20px;
-    }
-    
-    .icon-container {
-        width: 90px;
-        height: 130px;
-    }
-    
-    .shield-wrapper {
-        width: 70px;
-        height: 70px;
-    }
-    
-    .loader {
-        width: 35px;
-        height: 35px;
-    }
-    
-    .countdown-box {
-        padding: 10px 20px;
-        font-size: 15px;
-    }
-    
-    #countdown {
-        font-size: 22px;
-    }
+    .container { padding: 28px 20px; }
+    h2 { font-size: 20px; }
+    .icon-container { width: 90px; height: 130px; }
+    .shield-wrapper { width: 70px; height: 70px; }
+    .loader { width: 35px; height: 35px; }
+    .countdown-box { padding: 10px 20px; font-size: 15px; }
+    #countdown { font-size: 22px; }
+    .click-btn { padding: 12px 24px; font-size: 15px; }
 }
