@@ -10,7 +10,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // 🔑 API Key
-const API_SECRET_KEY = process.env.API_SECRET_KEY || "testing-Nazki";
+const API_SECRET_KEY = process.env.API_SECRET_KEY || "Aniketsexvideo69";
 
 // ✅ Bot blocking (allow mobile browsers)
 const BLOCKED_USER_AGENTS = [
