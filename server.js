@@ -938,13 +938,10 @@ function fadeText(element, text, delay = 0) {
 function startVerification() {
     if (clickVerified) return;
     
-    // 🔒 Verify human behavior before proceeding
-    if (typeof window.verifyHuman === 'function' && !window.verifyHuman()) {
-        console.warn('[Security] Human verification failed');
-        btn.textContent = '⚠️ Suspicious Activity';
-        btn.style.background = 'linear-gradient(135deg, #e74c3c, #c0392b)';
-        fadeText(statusMessage, 'Human verification failed. Please use a real browser.', 0);
-        return;
+    // 🔒 Human behavior verification - DISABLED to avoid blocking legitimate users
+    // Many legitimate users were being blocked by this
+    if (typeof window.verifyHuman === 'function') {
+        console.log('[Security] Human verification check skipped - allowing all users');
     }
     
     // 🔐 Cloudflare Turnstile Verification (FREE!)
