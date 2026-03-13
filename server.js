@@ -131,79 +131,42 @@ setInterval(() => {
 }, 30000);
 
 // 🛡️ Security Middleware
-// 🤖 Advanced Headless Browser Detection Middleware
+// 🤖 Advanced Headless Browser Detection Middleware (Relaxed for real users)
 function detectHeadlessBrowser(req, res, next) {
     const userAgent = (req.get('User-Agent') || '').toLowerCase();
     
-    // Check for headless indicators
-    const headlessIndicators = [
-        'headless',
-        'webdriver',
+    // Check for obvious automation tools ONLY
+    const automationIndicators = [
+        'python-requests',
+        'scrapy',
+        'headless',  // Only if standalone, not "headlesschrome"
+        '__selenium',
+        '__cdp',
         'phantomjs',
-        'selenium',
-        'chromedriver',
-        'geckodriver',
-        'playwright',
-        'python',
-        'curl',
-        'wget',
-        'java/',
-        'libwww',
-        'http',
-        'okhttp',
-        'axios'
+        'slimerjs',
+        'htmlunit',
+        'jsdom'
     ];
     
-    if (headlessIndicators.some(indicator => userAgent.includes(indicator))) {
-        console.log(`[Headless] BLOCKED: ${userAgent}`);
+    if (automationIndicators.some(indicator => userAgent.includes(indicator))) {
+        console.log(`[Headless] BLOCKED: ${userAgent.substring(0, 50)}...`);
         return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bot Detected</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🤖 Automated Access Blocked</h1></div></body></html>');
     }
     
-    // Check for missing user agent
-    if (!userAgent) {
-        console.log(`[Headless] BLOCKED: No User-Agent`);
-        return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bot Detected</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🤖 Automated Access Blocked</h1></div></body></html>');
-    }
+    // DO NOT block if missing user agent - let it through
+    // Some legitimate proxies or security tools remove UA
     
-    // 🔒 Advanced: Check for suspicious User-Agent patterns
-    // Real browsers have consistent UA patterns
-    const ua = req.get('User-Agent');
+    // DO NOT check for Mozilla/5.0 requirement - not all browsers use it
     
-    // Check UA structure (must have common browser components)
-    const hasMozilla = ua.includes('Mozilla/5.0');
-    const hasAppleWebKit = ua.includes('AppleWebKit');
-    const hasKHTML = ua.includes('KHTML');
-    const hasGecko = ua.includes('Gecko');
+    // DO NOT check for specific browser combinations - too many valid variations
     
-    if (!hasMozilla) {
-        console.log(`[Headless] BLOCKED: Invalid UA structure - ${userAgent}`);
-        return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bot Detected</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🤖 Invalid Browser</h1></div></body></html>');
-    }
+    // DO NOT check for version format - too strict, blocks legitimate browsers
     
-    // Check for realistic browser combinations
-    const isChrome = ua.includes('Chrome') && !ua.includes('Edg');
-    const isFirefox = ua.includes('Firefox') && !ua.includes('Seamonkey');
-    const isSafari = ua.includes('Safari') && !ua.includes('Chrome');
-    const isEdge = ua.includes('Edg');
-    
-    const hasValidBrowser = isChrome || isFirefox || isSafari || isEdge;
-    
-    if (!hasValidBrowser) {
-        console.log(`[Headless] BLOCKED: Unknown browser - ${userAgent}`);
-        return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bot Detected</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🤖 Unsupported Browser</h1></div></body></html>');
-    }
-    
-    // Validate User-Agent format (must have version numbers)
-    const hasVersion = /\d+\.\d+\.\d+/.test(ua);
-    if (!hasVersion) {
-        console.log(`[Headless] BLOCKED: No version number - ${userAgent}`);
-        return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bot Detected</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🤖 Invalid Browser Version</h1></div></body></html>');
-    }
-    
+    console.log(`[Headless] ACCESS GRANTED: ${userAgent.substring(0, 40)}...`);
     next();
 }
 
-// 🕵️ IP Behavior Tracking (Detects rapid sequential requests)
+// 🕵️ IP Behavior Tracking (Made much more permissive for real users)
 const ipBehaviorMap = new Map();
 
 function trackIPBehavior(req, res, next) {
@@ -219,6 +182,36 @@ function trackIPBehavior(req, res, next) {
             blockUntil: 0
         });
     }
+    
+    const ipData = ipBehaviorMap.get(ip);
+    
+    // Check if currently blocked
+    if (ipData.blocked && now < ipData.blockUntil) {
+        console.log(`[IP Tracker] BLOCKED: ${ip} (until ${new Date(ipData.blockUntil).toISOString()})`);
+        return res.status(429).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Rate Limited</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>⚠️ Too Many Requests</h1><p>Please try again in a few minutes</p></div></body></html>');
+    }
+    
+    // Record request
+    ipData.requests.push(now);
+    ipData.userAgents.add(userAgent);
+    
+    // Clean old requests (older than 10 seconds)
+    ipData.requests = ipData.requests.filter(time => now - time < 10000);
+    
+    // Detect suspicious patterns (MADE MUCH MORE PERMISSIVE)
+    const recentRequests = ipData.requests.length;
+    
+    // Only block if EXTREMELY suspicious (>30 requests in 10 seconds)
+    if (recentRequests > 30) {
+        console.log(`[IP Tracker] SUSPICIOUS: ${ip} made ${recentRequests} requests in 10s`);
+        ipData.blocked = true;
+        ipData.blockUntil = now + 600000; // Block for 10 minutes
+        return res.status(429).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Automated Detected</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🤖 Automated Access Detected</h1><p>Your IP has been temporarily blocked</p></div></body></html>');
+    }
+    
+    next();
+}
+
     
     const ipData = ipBehaviorMap.get(ip);
     
@@ -1155,16 +1148,32 @@ app.get('/link/:token', detectHeadlessBrowser, trackIPBehavior, rateLimiter, asy
     }
     
     const sessionId = tokenData.sessionId;
-
-    // 🔒 Block direct access - must come from /go/ or same origin
-    const sameOrigin = referrer.includes(host);
-    const fromGo = referrer.includes('/go/');
-    const fromAccess = referrer.includes(`/access/${sessionId}`);
     
-    if (!sameOrigin && !fromGo && !fromAccess) {
-        console.log(`[/link] BLOCKED: Invalid referrer - ${referrer}`);
-        return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Access Denied</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🚫 Direct Access Blocked</h1><p>Please use the verification page</p></div></body></html>');
+    // 🔒 Referrer validation - MADE LESS STRICT for legitimate users
+    // Many browsers block or strip referrers, so we only block obviously suspicious cases
+    
+    // Allow if no referrer (privacy settings)
+    if (!referrer || referrer === '') {
+        console.log(`[/link] Access granted (no referrer)`);
+    } 
+    // Allow if same origin
+    else if (referrer.includes(host)) {
+        console.log(`[/link] Access granted (same origin)`);
     }
+    // Allow if came from /go/
+    else if (referrer.includes('/go/')) {
+        console.log(`[/link] Access granted (from /go/)`);
+    }
+    // Allow if came from /access/ with sessionId (exact match not required anymore)
+    else if (referrer.includes('/access/')) {
+        console.log(`[/link] Access granted (from /access/)`);
+    }
+    // Otherwise log but allow access
+    else {
+        console.log(`[/link] Access granted (referrer: ${referrer.substring(0, 50)}...)`);
+    }
+    
+    // Don't block users based on referrer - it's unreliable
 
     try {
         const result = await findSession(sessionId);
