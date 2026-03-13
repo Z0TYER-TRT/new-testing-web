@@ -9,21 +9,56 @@
   "routes": [
     {
       "src": "/api/store-session",
-      "dest": "/server.js",
+      "dest": "/api/store-session",
       "methods": ["POST"]
     },
     {
       "src": "/api/process-session/(.*)",
-      "dest": "/server.js?sessionId=$1",
+      "dest": "/api/process-session/$1",
+      "methods": ["GET"]
+    },
+    {
+      "src": "/go/(.*)",
+      "dest": "/go/$1",
+      "methods": ["GET"]
+    },
+    {
+      "src": "/link/(.*)",
+      "dest": "/link/$1",
       "methods": ["GET"]
     },
     {
       "src": "/access/(.*)",
-      "dest": "/server.js"
+      "dest": "/access/$1",
+      "methods": ["GET"]
     },
     {
       "src": "/(.*)",
       "dest": "/server.js"
     }
-  ]
+  ],
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "/server.js"
+    },
+    {
+      "source": "/go/:path*",
+      "destination": "/server.js"
+    },
+    {
+      "source": "/link/:path*",
+      "destination": "/server.js"
+    },
+    {
+      "source": "/access/:path*",
+      "destination": "/server.js"
+    }
+  ],
+  "functions": {
+    "server.js": {
+      "memory": 1024,
+      "maxDuration": 30
+    }
+  }
 }

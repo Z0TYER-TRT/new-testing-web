@@ -7,6 +7,11 @@ const helmet = require('helmet');
 const cors = require('cors');
 
 const app = express();
+
+// Handle both Vercel serverless and本地 development
+if (process.env.NODE_ENV !== 'production') {
+    app.set('trust proxy', true);
+}
 const PORT = process.env.PORT || 3000;
 
 // 🔑 API Key - Hardcoded for Vercel deployment (32+ chars)
@@ -36,10 +41,10 @@ const MAX_REQUESTS_PER_IP = 100;
 
 // 🗄️ Database Shards
 const DB_SHARDS = [
-    'mongodb+srv://redirect-kawaii:6pYMr5v6WznRduAL@cluster0.cqnnbgi.mongodb.net/redirect_service?appName=Cluster0',
-    'mongodb+srv://redirect-kawaii2:HWoekNn54skXZ8GA@cluster1.gigfzvo.mongodb.net/redirect_service?appName=Cluster1',
-    'mongodb+srv://redirect-kawaii3:wiCwqRkusOUoSX8J@cluster2.brkkpuv.mongodb.net/redirect_service?appName=Cluster2'
-];
+    process.env.MONGODB_URI_1 || 'mongodb+srv://redirect-kawaii:6pYMr5v6WznRduAL@cluster0.cqnnbgi.mongodb.net/redirect_service?appName=Cluster0',
+    process.env.MONGODB_URI_2 || 'mongodb+srv://redirect-kawaii2:HWoekNn54skXZ8GA@cluster1.gigfzvo.mongodb.net/redirect_service?appName=Cluster1',
+    process.env.MONGODB_URI_3 || 'mongodb+srv://redirect-kawaii3:wiCwqRkusOUoSX8J@cluster2.brkkpuv.mongodb.net/redirect_service?appName=Cluster2'
+].filter(uri => uri && uri.length > 0); // Remove any undefined/empty URIs
 
 // 🔐 Connection caching
 const mongoClients = new Map();
@@ -212,36 +217,6 @@ function trackIPBehavior(req, res, next) {
     next();
 }
 
-    
-    const ipData = ipBehaviorMap.get(ip);
-    
-    // Check if currently blocked
-    if (ipData.blocked && now < ipData.blockUntil) {
-        console.log(`[IP Tracker] BLOCKED: ${ip} (until ${new Date(ipData.blockUntil).toISOString()})`);
-        return res.status(429).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Rate Limited</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>⚠️ Too Many Requests</h1><p>Please try again later</p></div></body></html>');
-    }
-    
-    // Record request
-    ipData.requests.push(now);
-    ipData.userAgents.add(userAgent);
-    
-    // Clean old requests (older than 10 seconds)
-    ipData.requests = ipData.requests.filter(time => now - time < 10000);
-    
-    // Detect suspicious patterns
-    const recentRequests = ipData.requests.length;
-    
-    // SUSPICIOUS: Too many requests in quick succession
-    if (recentRequests > 5) {
-        console.log(`[IP Tracker] SUSPICIOUS: ${ip} made ${recentRequests} requests in 10s`);
-        ipData.blocked = true;
-        ipData.blockUntil = now + 600000; // Block for 10 minutes
-        return res.status(429).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Automated Detected</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🤖 Automated Access Detected</h1><p>Your IP has been temporarily blocked</p></div></body></html>');
-    }
-    
-    next();
-}
-
 app.use(helmet({
     contentSecurityPolicy: {
         directives: {
@@ -367,9 +342,22 @@ function getShardIndex(sessionId) {
 // --- DATABASE CONNECTION ---
 async function getDatabase(index = 0) {
     const cacheKey = `shard_${index}`;
+    
+    // Check for cached collection
     if (mongoCollections.has(cacheKey)) {
-        return mongoCollections.get(cacheKey);
+        const col = mongoCollections.get(cacheKey);
+        // Verify connection is still alive
+        try {
+            col.db.admin().ping();
+            return col;
+        } catch (e) {
+            // Connection is dead, clean up and reconnect
+            console.log(`🔄 Connection stale, reconnecting Shard ${index + 1}...`);
+            mongoClients.delete(cacheKey);
+            mongoCollections.delete(cacheKey);
+        }
     }
+    
     try {
         if (!mongoClients.has(cacheKey)) {
             console.log(`🔌 Connecting to MongoDB Shard ${index + 1}...`);
@@ -454,6 +442,14 @@ app.use(compression());
 app.use(express.json({ limit: '10kb' }));
 app.use(express.urlencoded({ extended: true, limit: '10kb' }));
 
+// Timeout prevention for Vercel serverless functions
+if (process.env.VERCEL) {
+    app.use((req, res, next) => {
+        res.setTimeout(10000); // 10 second timeout for Vercel
+        next();
+    });
+}
+
 // ==========================================
 // ⚡ PUBLIC ENDPOINTS
 // ==========================================
@@ -469,12 +465,28 @@ app.use(express.static(path.join(__dirname, 'public'), {
 
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
-app.get('/health', (req, res) => res.json({
-    status: 'OK',
-    timestamp: new Date().toISOString(),
-    shards: DB_SHARDS.length,
-    vercel: process.env.VERCEL === '1'
-}));
+app.get('/health', async (req, res) => {
+    const healthCheck = {
+        status: 'OK',
+        timestamp: new Date().toISOString(),
+        shards: DB_SHARDS.length,
+        vercel: process.env.VERCEL === '1',
+        connections: mongoClients.size,
+        collections: mongoCollections.size
+    };
+    
+    // Check MongoDB connectivity
+    try {
+        const primaryShard = await getDatabase(0);
+        await primaryShard.db.admin().ping();
+        healthCheck.mongodb = 'connected';
+    } catch (err) {
+        healthCheck.mongodb = 'disconnected';
+        healthCheck.error = err.message;
+    }
+    
+    res.json(healthCheck);
+});
 
 app.get('/access/:sessionId', (req, res) => {
     if (!isValidSessionId(req.params.sessionId)) {
@@ -1494,8 +1506,47 @@ process.on('unhandledRejection', (reason, promise) => {
     // Don't exit - let Vercel handle it gracefully
 });
 
+// Graceful shutdown for development, skip on Vercel
+if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
+    process.on('SIGTERM', async () => {
+        console.log('🔄 SIGTERM received, closing MongoDB connections...');
+        for (const [key, client] of mongoClients) {
+            try {
+                await client.close();
+                console.log(`✅ MongoDB connection closed for ${key}`);
+            } catch (err) {
+                console.error(`❌ Error closing connection ${key}:`, err.message);
+            }
+        }
+        mongoClients.clear();
+        mongoCollections.clear();
+    });
+
+    process.on('SIGINT', async () => {
+        console.log('🔄 SIGINT received, closing MongoDB connections...');
+        for (const [key, client] of mongoClients) {
+            try {
+                await client.close();
+                console.log(`✅ MongoDB connection closed for ${key}`);
+            } catch (err) {
+                console.error(`❌ Error closing connection ${key}:`, err.message);
+            }
+        }
+        mongoClients.clear();
+        mongoCollections.clear();
+        process.exit(0);
+    });
+}
+
 if (require.main === module) {
     app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
 }
 
 module.exports = app;
+
+// Vercel serverless function handler
+if (process.env.VERCEL) {
+    module.exports = (req, res) => {
+        app(req, res);
+    };
+}
