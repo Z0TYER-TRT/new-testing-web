@@ -117,6 +117,15 @@ function animateProgress() {
 // Click Verification
 async function verifyClick() {
     if (clickVerified || !sessionId) return;
+    
+    // Honeypot check (FREE!) - Bots fill hidden fields
+    const honeypot = document.getElementById('honeypot');
+    if (honeypot && honeypot.value && honeypot.value.trim() !== '') {
+        console.warn('[Security] Honeypot triggered');
+        showError('Bot detected');
+        return;
+    }
+    
     clickTime = Date.now();
     clickVerified = true;
     console.log('Click verified! Mouse movements:', mouseMovements);

@@ -9,13 +9,29 @@ const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 🔑 API Key
-const API_SECRET_KEY = process.env.API_SECRET_KEY || "Aniketsexvideo69";
+// 🔑 API Key - NO FALLBACK (security requirement)
+const API_SECRET_KEY = process.env.API_SECRET_KEY;
 
-// ✅ Bot blocking (allow mobile browsers)
+if (!API_SECRET_KEY) {
+    console.error('❌ FATAL: API_SECRET_KEY environment variable is required');
+    console.error('❌ Set API_SECRET_KEY in environment before starting');
+    process.exit(1);
+}
+
+if (API_SECRET_KEY.length < 32) {
+    console.error('❌ FATAL: API_SECRET_KEY must be at least 32 characters');
+    process.exit(1);
+}
+
+// 🛡️ Cloudflare Turnstile Configuration (FREE)
+const TURNSTILE_SITE_KEY = process.env.TURNSTILE_SITE_KEY || '0x4AAAAAAAxxxxxxxxxxxx';
+const TURNSTILE_SECRET_KEY = process.env.TURNSTILE_SECRET_KEY || '0x4AAAAAAAyyyyyyyyyyyy';
+
+// ✅ Enhanced Bot blocking (allow mobile browsers)
 const BLOCKED_USER_AGENTS = [
     'python-requests', 'scrapy', 'selenium', 'puppeteer',
-    'playwright', 'headless'
+    'playwright', 'headless', 'chromedriver', 'geckodriver',
+    'phantomjs', 'slimerjs', 'htmlunit', 'jsdom'
 ];
 
 const RATE_LIMIT_WINDOW = 60000;
@@ -28,11 +44,223 @@ const DB_SHARDS = [
     'mongodb+srv://redirect-kawaii3:wiCwqRkusOUoSX8J@cluster2.brkkpuv.mongodb.net/redirect_service?appName=Cluster2'
 ];
 
-// ✅ Connection caching
+// 🔐 Connection caching
 const mongoClients = new Map();
 const mongoCollections = new Map();
 
+// 🧩 Challenge-Response System (Prevents automated tools)
+const challenges = new Map();
+
+function generateChallenge() {
+    const challenge = {
+        id: crypto.randomBytes(16).toString('hex'),
+        operation: ['+', '-', '*'][Math.floor(Math.random() * 3)],
+        num1: Math.floor(Math.random() * 20) + 1,
+        num2: Math.floor(Math.random() * 20) + 1,
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 300000 // 5 minutes
+    };
+    
+    challenges.set(challenge.id, challenge);
+    
+    // Cleanup expired challenges periodically
+    setTimeout(() => {
+        challenges.delete(challenge.id);
+    }, 300000);
+    
+    return challenge;
+}
+
+function verifyChallenge(challengeId, answer) {
+    const challenge = challenges.get(challengeId);
+    if (!challenge) return false;
+    
+    if (Date.now() > challenge.expiresAt) {
+        challenges.delete(challengeId);
+        return false;
+    }
+    
+    let correctAnswer;
+    switch (challenge.operation) {
+        case '+': correctAnswer = challenge.num1 + challenge.num2; break;
+        case '-': correctAnswer = challenge.num1 - challenge.num2; break;
+        case '*': correctAnswer = challenge.num1 * challenge.num2; break;
+    }
+    
+    const isCorrect = parseInt(answer) === correctAnswer;
+    if (isCorrect) {
+        challenges.delete(challengeId);
+    }
+    
+    return isCorrect;
+}
+
+// 🔐 One-time redirect tokens (prevents replay attacks)
+const redirectTokens = new Map();
+const TOKEN_EXPIRY = 60000; // 1 minute
+
+function generateRedirectToken(sessionId) {
+    const token = crypto.randomBytes(32).toString('base64url');
+    redirectTokens.set(token, {
+        sessionId,
+        createdAt: Date.now(),
+        expiresAt: Date.now() + TOKEN_EXPIRY
+    });
+    return token;
+}
+
+function validateRedirectToken(token) {
+    const tokenData = redirectTokens.get(token);
+    if (!tokenData) return null;
+    
+    if (Date.now() > tokenData.expiresAt) {
+        redirectTokens.delete(token);
+        return null;
+    }
+    
+    // Use token only once
+    redirectTokens.delete(token);
+    return tokenData;
+}
+
+// Cleanup expired tokens periodically
+setInterval(() => {
+    const now = Date.now();
+    for (const [token, data] of redirectTokens) {
+        if (now > data.expiresAt) {
+            redirectTokens.delete(token);
+        }
+    }
+}, 30000);
+
 // 🛡️ Security Middleware
+// 🤖 Advanced Headless Browser Detection Middleware
+function detectHeadlessBrowser(req, res, next) {
+    const userAgent = (req.get('User-Agent') || '').toLowerCase();
+    
+    // Check for headless indicators
+    const headlessIndicators = [
+        'headless',
+        'webdriver',
+        'phantomjs',
+        'selenium',
+        'chromedriver',
+        'geckodriver',
+        'playwright',
+        'python',
+        'curl',
+        'wget',
+        'java/',
+        'libwww',
+        'http',
+        'okhttp',
+        'axios'
+    ];
+    
+    if (headlessIndicators.some(indicator => userAgent.includes(indicator))) {
+        console.log(`[Headless] BLOCKED: ${userAgent}`);
+        return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bot Detected</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🤖 Automated Access Blocked</h1></div></body></html>');
+    }
+    
+    // Check for missing user agent
+    if (!userAgent) {
+        console.log(`[Headless] BLOCKED: No User-Agent`);
+        return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bot Detected</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🤖 Automated Access Blocked</h1></div></body></html>');
+    }
+    
+    // 🔒 Advanced: Check for suspicious User-Agent patterns
+    // Real browsers have consistent UA patterns
+    const ua = req.get('User-Agent');
+    
+    // Check UA structure (must have common browser components)
+    const hasMozilla = ua.includes('Mozilla/5.0');
+    const hasAppleWebKit = ua.includes('AppleWebKit');
+    const hasKHTML = ua.includes('KHTML');
+    const hasGecko = ua.includes('Gecko');
+    
+    if (!hasMozilla) {
+        console.log(`[Headless] BLOCKED: Invalid UA structure - ${userAgent}`);
+        return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bot Detected</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🤖 Invalid Browser</h1></div></body></html>');
+    }
+    
+    // Check for realistic browser combinations
+    const isChrome = ua.includes('Chrome') && !ua.includes('Edg');
+    const isFirefox = ua.includes('Firefox') && !ua.includes('Seamonkey');
+    const isSafari = ua.includes('Safari') && !ua.includes('Chrome');
+    const isEdge = ua.includes('Edg');
+    
+    const hasValidBrowser = isChrome || isFirefox || isSafari || isEdge;
+    
+    if (!hasValidBrowser) {
+        console.log(`[Headless] BLOCKED: Unknown browser - ${userAgent}`);
+        return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bot Detected</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🤖 Unsupported Browser</h1></div></body></html>');
+    }
+    
+    // Validate User-Agent format (must have version numbers)
+    const hasVersion = /\d+\.\d+\.\d+/.test(ua);
+    if (!hasVersion) {
+        console.log(`[Headless] BLOCKED: No version number - ${userAgent}`);
+        return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bot Detected</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🤖 Invalid Browser Version</h1></div></body></html>');
+    }
+    
+    next();
+}
+
+// 🕵️ IP Behavior Tracking (Detects rapid sequential requests)
+const ipBehaviorMap = new Map();
+
+function trackIPBehavior(req, res, next) {
+    const ip = req.headers['x-forwarded-for']?.split(',')[0] || req.ip || 'unknown';
+    const userAgent = req.get('User-Agent') || '';
+    const now = Date.now();
+    
+    if (!ipBehaviorMap.has(ip)) {
+        ipBehaviorMap.set(ip, {
+            requests: [],
+            userAgents: new Set(),
+            blocked: false,
+            blockUntil: 0
+        });
+    }
+    
+    const ipData = ipBehaviorMap.get(ip);
+    
+    // Check if currently blocked
+    if (ipData.blocked && now < ipData.blockUntil) {
+        console.log(`[IP Tracker] BLOCKED: ${ip} (until ${new Date(ipData.blockUntil).toISOString()})`);
+        return res.status(429).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Rate Limited</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>⚠️ Too Many Requests</h1><p>Please try again later</p></div></body></html>');
+    }
+    
+    // Record request
+    ipData.requests.push(now);
+    ipData.userAgents.add(userAgent);
+    
+    // Clean old requests (older than 10 seconds)
+    ipData.requests = ipData.requests.filter(time => now - time < 10000);
+    
+    // Detect suspicious patterns
+    const recentRequests = ipData.requests.length;
+    
+    // SUSPICIOUS: Too many requests in quick succession
+    if (recentRequests > 5) {
+        console.log(`[IP Tracker] SUSPICIOUS: ${ip} made ${recentRequests} requests in 10s`);
+        ipData.blocked = true;
+        ipData.blockUntil = now + 600000; // Block for 10 minutes
+        return res.status(429).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Automated Detected</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🤖 Automated Access Detected</h1><p>Your IP has been temporarily blocked</p></div></body></html>');
+    }
+    
+    next();
+}
+    
+    // Check for missing user agent
+    if (!userAgent) {
+        console.log(`[Headless] BLOCKED: No User-Agent`);
+        return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bot Detected</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🤖 Automated Access Blocked</h1></div></body></html>');
+    }
+    
+    next();
+}
+
 app.use(helmet({
     contentSecurityPolicy: {
         directives: {
@@ -109,6 +337,27 @@ function botGuard(req, res, next) {
         return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bot Detected</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🤖 Bot Detected</h1></div></body></html>');
     }
     next();
+}
+
+// --- URL ENCRYPTION ---
+function encryptUrl(url) {
+    const iv = crypto.randomBytes(16);
+    const cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(API_SECRET_KEY.padEnd(32).slice(0, 32)), iv);
+    let encrypted = cipher.update(url, 'utf8', 'hex');
+    encrypted += cipher.final('hex');
+    return iv.toString('hex') + ':' + encrypted;
+}
+
+function decryptUrl(encrypted) {
+    try {
+        const parts = encrypted.split(':');
+        const iv = Buffer.from(parts[0], 'hex');
+        const encryptedData = parts[1];
+        const decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(API_SECRET_KEY.padEnd(32).slice(0, 32)), iv);
+        let decrypted = decipher.update(encryptedData, 'hex', 'utf8');
+        decrypted += decipher.final('utf8');
+        return decrypted;
+    } catch (_) { return null; }
 }
 
 // --- URL VALIDATION ---
@@ -253,6 +502,74 @@ app.get('/access/:sessionId', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// 🔍 CAPTCHA Verification Endpoint (reCAPTCHA v3)
+async function verifyCaptcha(token, ip) {
+    const RECAPTCHA_SECRET = process.env.RECAPTCHA_V3_SECRET;
+    
+    if (!RECAPTCHA_SECRET) {
+        console.warn('[CAPTCHA] No secret configured, skipping verification');
+        return { success: true, score: 1.0 };
+    }
+    
+    try {
+        const response = await fetch('https://www.google.com/recaptcha/api/siteverify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+                secret: RECAPTCHA_SECRET,
+                response: token,
+                remoteip: ip
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (!data.success) {
+            console.log('[CAPTCHA] Failed:', data['error-codes']);
+        }
+        
+        return data;
+    } catch (error) {
+        console.error('[CAPTCHA] Verification error:', error.message);
+        // Fail open - allow if CAPTCHA service is down
+        return { success: true, score: 0.7 };
+    }
+}
+
+// ==========================================
+// ❌ FREE: Cloudflare Turnstile Verification
+// ==========================================
+async function verifyTurnstile(token, ip) {
+    if (!TURNSTILE_SECRET_KEY || TURNSTILE_SECRET_KEY.includes('yyyyyyyy')) {
+        console.warn('[Turnstile] Not configured, skipping verification');
+        return { success: true, score: 1.0 };
+    }
+    
+    try {
+        const response = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+                secret: TURNSTILE_SECRET_KEY,
+                response: token,
+                remoteip: ip
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (!data.success) {
+            console.log('[Turnstile] Failed:', data['error-codes']);
+        }
+        
+        return data;
+    } catch (error) {
+        console.error('[Turnstile] Verification error:', error.message);
+        // Fail open - allow if Turnstile service is down
+        return { success: true, score: 0.7 };
+    }
+}
+
 // ==========================================
 // 🎨 ENHANCED SHARED UI STYLES (SMOOTH ANIMATIONS)
 // ==========================================
@@ -304,36 +621,295 @@ h2{font-size:22px;font-weight:700;margin-bottom:10px;color:#fff;transition:color
 `;
 
 // ==========================================
-// 🔒 OPTIMIZED ANTI-BYPASS JAVASCRIPT
+// 🔒 ENHANCED ANTI-BYPASS JAVASCRIPT (HEADLESS DETECTION)
 // ==========================================
 const ANTI_BYPASS_JS = `
 (function(){
 'use strict';
-const checkAutomation = () => {
-    const signals = ['webdriver', '__selenium', '__cdp', '__playwright'];
+
+// 🔍 Headless Browser Detection
+const detectHeadless = () => {
+    let suspiciousScore = 0;
+    
+    // Check for webdriver flags
+    if (navigator.webdriver) suspiciousScore += 50;
+    
+    // Check for Chrome Headless indicators
+    if (!navigator.plugins || navigator.plugins.length === 0) suspiciousScore += 10;
+    if (!navigator.languages || navigator.languages.length === 0) suspiciousScore += 10;
+    if (!window.chrome) suspiciousScore += 5;
+    if (navigator.permissions.query) {
+        navigator.permissions.query({name:'notifications'}).then(function(permissionStatus) {
+            if (Notification.permission !== 'default' && permissionStatus.state !== 'prompt') {
+                suspiciousScore += 5;
+            }
+        });
+    }
+    
+    // Check screen dimensions (headless often has weird dimensions)
+    if (window.screen.width === 0 || window.screen.height === 0) suspiciousScore += 30;
+    if (window.outerWidth === 0 || window.outerHeight === 0) suspiciousScore += 30;
+    
+    // Check for missing Chrome objects
+    if (!window.chrome || !window.chrome.runtime) suspiciousScore += 5;
+    
+    // Check for automation signals
+    const signals = ['__selenium', '__cdp', '__playwright', '_phantom', 'callPhantom', '_Selenium_IDE_Recorder', 'document.getElementsByTagName.toString'];
     for (const signal of signals) {
-        if (navigator[signal] || window[signal]) {
+        if (navigator[signal] || window[signal] || document[signal]) {
+            suspiciousScore += 40;
+        }
+    }
+    
+    // Check navigator properties
+    if (navigator.connection === undefined) suspiciousScore += 5;
+    if (navigator.deviceMemory === undefined) suspiciousScore += 3;
+    
+    // Check canvas (headless browsers have different canvas rendering)
+    try {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        ctx.fillText('test', 0, 0);
+        const dataURL = canvas.toDataURL();
+        // Headless browsers have empty or non-standard canvas
+        if (!dataURL || dataURL.length < 1000) suspiciousScore += 15;
+    } catch(e) {
+        suspiciousScore += 10;
+    }
+    
+    // Check webdriver-specific navigator properties
+    if (window.navigator.permissions) suspiciousScore += 3;
+    if (window.navigator.webdriver !== undefined) suspiciousScore += 20;
+    
+    // Block if too suspicious
+    if (suspiciousScore >= 50) {
+        console.warn('[Security] Headless browser detected, score:', suspiciousScore);
+        window.location.href = '/blocked';
+    }
+};
+detectHeadless();
+
+// Check for automation tools
+const checkAutomation = () => {
+    const signals = ['webdriver', '__selenium', '__cdp', '__playwright', '_phantom', 'callPhantom', '_Selenium_IDE_Recorder'];
+    for (const signal of signals) {
+        if (navigator[signal] || window[signal] || document[signal]) {
             window.location.href = '/blocked';
             return;
         }
     }
-    if (navigator.webdriver === true) window.location.href = '/blocked';
 };
 checkAutomation();
-document.addEventListener('contextmenu', (e) => { e.preventDefault(); });
+
+// Detect DevTools opening
+let devtoolsOpen = false;
+setInterval(() => {
+    const threshold = 160;
+    if (window.outerWidth - window.innerWidth > threshold || 
+        window.outerHeight - window.innerHeight > threshold) {
+        if (!devtoolsOpen) {
+            devtoolsOpen = true;
+            window.location.href = '/blocked';
+        }
+    }
+}, 500);
+
+// Block right-click
+document.addEventListener('contextmenu', (e) => { 
+    e.preventDefault(); 
+    e.stopPropagation();
+    return false;
+}, true);
+
+// Block keyboard shortcuts for DevTools
 document.addEventListener('keydown', (e) => {
-    if (e.ctrlKey && (e.key === 'u' || e.key === 's' || e.key === 'i' || e.key === 'j' || e.key === 'c')) {
+    if (e.ctrlKey && (e.key === 'u' || e.key === 's' || e.key === 'i' || e.key === 'j' || e.key === 'c' || e.key === 'shift' || e.key === 'k')) {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+    }
+    if (e.key === 'F12' || (e.ctrlKey && e.shiftKey && e.key === 'I')) {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+    }
+    if ((e.metaKey || e.ctrlKey) && e.altKey && (e.key === 'i' || e.key === 'j' || e.key === 'c')) {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+    }
+}, true);
+
+// Detect drag events that might indicate inspection
+document.addEventListener('dragstart', (e) => {
+    e.preventDefault();
+});
+
+// Disable text selection
+document.addEventListener('selectstart', (e) => {
+    if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
         e.preventDefault();
     }
-    if (e.key === 'F12') { e.preventDefault(); }
 });
+
+// Debugger trap
+setInterval(() => {
+    const start = Date.now();
+    debugger;
+    if (Date.now() - start > 100) {
+        window.location.href = '/blocked';
+    }
+});
+
+// Clear console periodically to hide redirects
+setInterval(() => {
+    console.clear();
+}, 2000);
+
+// Block copy-paste
+document.addEventListener('copy', (e) => {
+    e.preventDefault();
+});
+document.addEventListener('paste', (e) => {
+    e.preventDefault();
+});
+
+// Disable inspect element
+Object.defineProperty(document, 'querySelector', {
+    value: function() {
+        throw new Error('Inspection not allowed');
+    }
+})();
+
+// 👆 Human Behavior Detection (FREE!)
+let humanVerified = false;
+let mouseMovements = 0;
+let mouseDistances = [];
+let lastMousePos = { x: 0, y: 0 };
+let startTime = Date.now();
+let clickTimestamps = [];
+let scrollEvents = [];
+let focusBlurEvents = [];
+let touchEvents = [];
+
+// Track detailed mouse movements
+document.addEventListener('mousemove', (e) => {
+    mouseMovements++;
+    
+    // Calculate distance moved
+    if (lastMousePos.x !== 0 || lastMousePos.y !== 0) {
+        const dx = e.clientX - lastMousePos.x;
+        const dy = e.clientY - lastMousePos.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        mouseDistances.push(distance);
+        if (mouseDistances.length > 50) mouseDistances.shift();
+    }
+    lastMousePos = { x: e.clientX, y: e.clientY };
+}, { passive: true });
+
+// Track clicks
+document.addEventListener('click', (e) => {
+    clickTimestamps.push(Date.now());
+    if (clickTimestamps.length > 10) clickTimestamps.shift();
+});
+
+// Track scroll events (FREE detection)
+document.addEventListener('scroll', (e) => {
+    scrollEvents.push({
+        time: Date.now(),
+        scrollY: window.scrollY
+    });
+    if (scrollEvents.length > 20) scrollEvents.shift();
+}, { passive: true });
+
+// Track focus/blur events (tab switching detection)
+window.addEventListener('focus', () => {
+    focusBlurEvents.push({ type: 'focus', time: Date.now() });
+});
+window.addEventListener('blur', () => {
+    focusBlurEvents.push({ type: 'blur', time: Date.now() });
+});
+
+// Track touch events for mobile
+document.addEventListener('touchstart', (e) => {
+    touchEvents.push({
+        time: Date.now(),
+        touches: e.touches.length,
+        x: e.touches[0]?.clientX || 0,
+        y: e.touches[0]?.clientY || 0
+    });
+    if (touchEvents.length > 10) touchEvents.shift();
+}, { passive: true });
+
+// Function to verify human behavior pattern
+window.verifyHuman = function() {
+    const timeElapsed = Date.now() - startTime;
+    const avgDistance = mouseDistances.length > 0 
+        ? mouseDistances.reduce((a, b) => a + b, 0) / mouseDistances.length 
+        : 0;
+    
+    // Check for suspicious patterns
+    let suspiciousScore = 0;
+    
+    // TOO fast - automation
+    if (timeElapsed < 1000) suspiciousScore += 30;
+    if (mouseMovements < 5) suspiciousScore += 30;
+    
+    // TOO consistent - automation
+    if (mouseMovements > 100 && avgDistance < 50) suspiciousScore += 20;
+    
+    // Perfect timing - automation
+    if (clickTimestamps.length >= 2) {
+        const intervals = [];
+        for (let i = 1; i < clickTimestamps.length; i++) {
+            intervals.push(clickTimestamps[i] - clickTimestamps[i-1]);
+        }
+        const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+        const variance = intervals.reduce((sum, interval) => sum + Math.pow(interval - avgInterval, 2), 0) / intervals.length;
+        if (Math.sqrt(variance) < 50) suspiciousScore += 30; // Too consistent
+    }
+    
+    // Check mouse movement smoothness (automation is too smooth)
+    if (mouseDistances.length > 10) {
+        const variations = mouseDistances.slice(-10).map((d, i) => {
+            if (i === 0) return 0;
+            return Math.abs(d - mouseDistances[mouseDistances.length - 10 + i - 1]);
+        });
+        const avgVariation = variations.reduce((a, b) => a + b, 0) / variations.length;
+        if (avgVariation < 5 && mouseMovements > 50) suspiciousScore += 25;
+    }
+    
+    // Scroll detection (FREE!)
+    if (scrollEvents.length === 0 && timeElapsed > 2000) {
+        suspiciousScore += 15; // No scrolling after 2 seconds
+    }
+    
+    // Focus/blur detection (tab switching)
+    if (focusBlurEvents.length > 3) {
+        suspiciousScore += 20; // Too many focus/blur events
+    }
+    
+    // Touch detection (mobile vs desktop)
+    const isMobile = /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    if (isMobile && touchEvents.length === 0) {
+        suspiciousScore += 25; // Mobile device but no touch events
+    }
+    
+    humanVerified = suspiciousScore < 30;
+    return humanVerified;
+};
+
+// Mark verified after mouse movement sufficient
+setTimeout(() => {
+    humanVerified = window.verifyHuman();
+}, 3000);
 })();
 `;
 
 // ==========================================
-// 1. GO PATH (ENHANCED UI)
+// 1. GO PATH (ENHANCED UI) - WITH HEADLESS DETECTION
 // ==========================================
-app.get('/go/:sessionId', rateLimiter, async (req, res) => {
+app.get('/go/:sessionId', detectHeadlessBrowser, trackIPBehavior, rateLimiter, async (req, res) => {
     const sessionId = req.params.sessionId;
     console.log(`[/go] Request: ${sessionId}`);
 
@@ -373,8 +949,11 @@ app.get('/go/:sessionId', rateLimiter, async (req, res) => {
         await collection.updateOne({ session_id: sessionId }, { $inc: { access_count: 1 } });
 
         const host = req.get('host');
-        const linkUrl = `https://${host}/link/${sessionId}`;
+        const redirectToken = generateRedirectToken(sessionId);
+        const linkUrl = `https://${host}/link/${redirectToken}`;
 
+        const turnstileSiteKey = process.env.TURNSTILE_SITE_KEY || '0x4AAAAAAAxxxxxxxxxxxx';
+        
         res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -383,6 +962,7 @@ app.get('/go/:sessionId', rateLimiter, async (req, res) => {
 <meta name="referrer" content="no-referrer">
 <meta name="theme-color" content="#1a1a2e">
 <title>🔐 Click to Continue</title>
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 <style>${SHARED_STYLES}</style>
 <svg style="position:absolute;width:0;height:0"><defs><linearGradient id="shieldGradient" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#667eea;stop-opacity:1"/><stop offset="50%" style="stop-color:#764ba2;stop-opacity:1"/><stop offset="100%" style="stop-color:#667eea;stop-opacity:1"/></linearGradient></defs></svg>
 </head>
@@ -435,6 +1015,64 @@ function fadeText(element, text, delay = 0) {
 
 function startVerification() {
     if (clickVerified) return;
+    
+    // 🔒 Verify human behavior before proceeding
+    if (typeof window.verifyHuman === 'function' && !window.verifyHuman()) {
+        console.warn('[Security] Human verification failed');
+        btn.textContent = '⚠️ Suspicious Activity';
+        btn.style.background = 'linear-gradient(135deg, #e74c3c, #c0392b)';
+        fadeText(statusMessage, 'Human verification failed. Please use a real browser.', 0);
+        return;
+    }
+    
+    // 🔐 Cloudflare Turnstile Verification (FREE!)
+    btn.disabled = true;
+    btn.textContent = '🔒 Verifying...';
+    fadeText(statusMessage, 'Running security check...', 0);
+    
+    if (typeof turnstile !== 'undefined') {
+        turnstile.ready(function() {
+            turnstile.execute('${turnstileSiteKey}', {
+                action: 'submit'
+            })
+            .then(function(token) {
+                fetch('/api/verify-turnstile', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token: token })
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success) {
+                        btn.textContent = '✓ Verified!';
+                        proceedAfterVerification();
+                    } else {
+                        btn.disabled = false;
+                        btn.textContent = '⚠️ Verification Failed';
+                        btn.style.background = 'linear-gradient(135deg, #e74c3c, #c0392b)';
+                        fadeText(statusMessage, data.message || 'Security check failed', 0);
+                    }
+                })
+                .catch(err => {
+                    console.error('[Turnstile] Error:', err);
+                    // Fail open - allow if Turnstile fails
+                    proceedAfterVerification();
+                });
+            })
+            .catch(err => {
+                console.error('[Turnstile] Execute error:', err);
+                // Fail open - allow if Turnstile fails
+                proceedAfterVerification();
+            });
+        });
+    } else {
+        // Turnstile not loaded - proceed anyway (fail open)
+        console.warn('[Turnstile] Not loaded, proceeding anyway');
+        proceedAfterVerification();
+    }
+}
+
+function proceedAfterVerification() {
     clickVerified = true;
 
     btn.disabled = true;
@@ -477,6 +1115,9 @@ function startVerification() {
         }, 1000);
     }
 
+    // 🔒 Random delay to confuse automation timing analysis
+    const randomDelay = Math.floor(Math.random() * 1500) + 2000; // 2-3.5 seconds
+    
     setTimeout(() => {
         const ua = navigator.userAgent || '';
         const isAndroid = /Android/i.test(ua);
@@ -490,7 +1131,7 @@ function startVerification() {
         } else {
             window.location.href = linkUrl;
         }
-    }, 2500);
+    }, randomDelay);
 }
 
 if (btn) {
@@ -508,15 +1149,33 @@ if (btn) {
 });
 
 // ==========================================
-// 2. LINK PATH (ENHANCED UI)
+// 2. LINK PATH (ENHANCED UI) - WITH HEADLESS DETECTION
 // ==========================================
-app.get('/link/:sessionId', rateLimiter, async (req, res) => {
-    const sessionId = req.params.sessionId;
+app.get('/link/:token', detectHeadlessBrowser, trackIPBehavior, rateLimiter, async (req, res) => {
+    const token = req.params.token;
     const requestStartTime = Date.now();
-    console.log(`[/link] Request: ${sessionId}`);
+    const referrer = req.get('referrer') || '';
+    const host = req.get('host');
+    
+    console.log(`[/link] Request: ${token.substring(0, 10)}... | Referrer: ${referrer}`);
 
-    if (!isValidSessionId(sessionId)) {
-        return res.status(400).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Invalid</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>❌ Invalid Link</h1></div></body></html>');
+    // 🔒 Validate redirect token
+    const tokenData = validateRedirectToken(token);
+    if (!tokenData) {
+        console.log(`[/link] BLOCKED: Invalid token - ${token.substring(0, 10)}...`);
+        return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Access Denied</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🚫 Invalid or Expired Link</h1><p>Please start over from the verification page</p></div></body></html>');
+    }
+    
+    const sessionId = tokenData.sessionId;
+
+    // 🔒 Block direct access - must come from /go/ or same origin
+    const sameOrigin = referrer.includes(host);
+    const fromGo = referrer.includes('/go/');
+    const fromAccess = referrer.includes(`/access/${sessionId}`);
+    
+    if (!sameOrigin && !fromGo && !fromAccess) {
+        console.log(`[/link] BLOCKED: Invalid referrer - ${referrer}`);
+        return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Access Denied</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🚫 Direct Access Blocked</h1><p>Please use the verification page</p></div></body></html>');
     }
 
     try {
@@ -538,8 +1197,9 @@ app.get('/link/:sessionId', rateLimiter, async (req, res) => {
         }
 
         await collection.updateOne({ session_id: sessionId }, { $set: { used: true, used_at: new Date() } });
-        const dest = sessionData.short_url;
-        console.log(`[/link] Final: ${sessionId} -> ${dest}`);
+        const destUrl = sessionData.short_url;
+        const encryptedDest = encryptUrl(destUrl);
+        console.log(`[/link] Redirecting: ${sessionId}`);
 
         res.send(`<!DOCTYPE html>
 <html lang="en">
@@ -569,7 +1229,7 @@ app.get('/link/:sessionId', rateLimiter, async (req, res) => {
 <script>${ANTI_BYPASS_JS}</script>
 <script>
 (function(){
-const dest = '${dest}';
+const encryptedDest = '${encryptedDest}';
 const progress = document.getElementById('progress');
 const statusMessage = document.getElementById('statusMessage');
 
@@ -593,11 +1253,56 @@ if (progress) {
     progress.classList.add('animate');
 }
 
-fadeText(statusMessage, 'Verifying session...', 0);
-fadeText(statusMessage, 'Opening destination...', 400);
+fadeText(statusMessage, 'Decrypting secure link...', 0);
+
+// 🔒 Hide token from browser history immediately
+try {
+    history.replaceState(null, '', '/secure-redirect');
+} catch(e) {}
 
 setTimeout(() => {
-    window.location.href = dest;
+    fetch('/api/decrypt-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ encrypted: encryptedDest })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success && data.url) {
+            fadeText(statusMessage, 'Opening destination...', 400);
+            
+            // 🔒 Random delay to confuse timing analysis
+            const randomDelay = Math.floor(Math.random() * 1000) + 400; // 400-1400ms
+            
+            // 🔒 Additional obfuscation layers
+            setTimeout(() => {
+                const u = data.url;
+                if (typeof u === 'string' && u.length > 0) {
+                    try {
+                        // Method 1: eval obfuscation
+                        const f = 'window.location.assign';
+                        eval(\`\${f}('\${u}')\`);
+                    } catch(e1) {
+                        try {
+                            // Method 2: Blob redirect
+                            const blob = new Blob([\`<script>window.location.href='\${u}';<\\/script>\`], { type: 'text/html' });
+                            const blobUrl = URL.createObjectURL(blob);
+                            window.location.href = blobUrl;
+                            setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+                        } catch(e2) {
+                            // Method 3: Fallback
+                            window.location.href = u;
+                        }
+                    }
+                }
+            }, randomDelay);
+        } else {
+            fadeText(statusMessage, 'Link expired', 0);
+        }
+    })
+    .catch(() => {
+        fadeText(statusMessage, 'Security check failed', 0);
+    });
 }, 800);
 })();
 </script>
@@ -650,6 +1355,136 @@ app.post('/api/verify-click', rateLimiter, async (req, res) => {
         console.error('[Verify-Click] Error:', error.message);
         return res.json({ success: false, message: 'Verification failed' });
     }
+});
+
+// ==========================================
+// URL Decryption Endpoint
+// ==========================================
+app.post('/api/decrypt-url', rateLimiter, async (req, res) => {
+    const { encrypted } = req.body;
+    if (!encrypted) return res.json({ success: false, message: 'Invalid request' });
+    
+    try {
+        const decryptedUrl = decryptUrl(encrypted);
+        if (!decryptedUrl || !isValidUrl(decryptedUrl)) {
+            return res.json({ success: false, message: 'Invalid URL' });
+        }
+        
+        const ip = req.headers['x-forwarded-for']?.split(',')[0] || req.ip;
+        console.log(`[Decrypt] IP: ${ip}`);
+        
+        return res.json({ success: true, url: decryptedUrl });
+    } catch (error) {
+        console.error('[Decrypt] Error:', error.message);
+        return res.json({ success: false, message: 'Decryption failed' });
+    }
+});
+
+// ==========================================
+// 🧩 Challenge Verification Endpoints
+// ==========================================
+app.get('/api/get-challenge', rateLimiter, (req, res) => {
+    const challenge = generateChallenge();
+    res.json({
+        success: true,
+        challenge_id: challenge.id,
+        num1: challenge.num1,
+        num2: challenge.num2,
+        operation: challenge.operation
+    });
+});
+
+app.post('/api/verify-challenge', rateLimiter, async (req, res) => {
+    const { challenge_id, answer } = req.body;
+    if (!challenge_id || !answer) {
+        return res.json({ success: false, message: 'Missing fields' });
+    }
+    
+    const isValid = verifyChallenge(challenge_id, answer);
+    
+    if (!isValid) {
+        console.log(`[Challenge] FAILED: ${challenge_id} - ${answer}`);
+        // Track failed attempts
+        const ip = req.headers['x-forwarded-for']?.split(',')[0] || req.ip;
+        return res.json({ success: false, message: 'Incorrect answer' });
+    }
+    
+    console.log(`[Challenge] PASSED: ${challenge_id}`);
+    res.json({ success: true, message: 'Challenge verified' });
+});
+
+// ==========================================
+// 🔐 CAPTCHA Verification Endpoint (reCAPTCHA v3)
+// ==========================================
+app.post('/api/verify-captcha', rateLimiter, async (req, res) => {
+    const { token } = req.body;
+    const ip = req.headers['x-forwarded-for']?.split(',')[0] || req.ip;
+    
+    if (!token) {
+        return res.json({ success: false, message: 'Missing CAPTCHA token' });
+    }
+    
+    // Verify with Google
+    const result = await verifyCaptcha(token, ip);
+    
+    if (!result.success) {
+        console.log(`[CAPTCHA] Verification failed: ${JSON.stringify(result)}`);
+        return res.json({ 
+            success: false, 
+            message: 'CAPTCHA verification failed',
+            score: 0
+        });
+    }
+    
+    // Score: 0.0 = bot, 1.0 = human
+    // Threshold: 0.5 or higher = acceptable
+    const score = result.score || 0;
+    const threshold = 0.5;
+    
+    if (score < threshold) {
+        console.log(`[CAPTCHA] Score too low: ${score} (threshold: ${threshold})`);
+        return res.json({ 
+            success: false, 
+            message: 'Suspicious activity detected',
+            score: score
+        });
+    }
+    
+    console.log(`[CAPTCHA] Verified successfully: ${score}`);
+    res.json({ 
+        success: true, 
+        message: 'CAPTCHA verified',
+        score: score
+    });
+});
+
+// ==========================================
+// ❌ FREE: Cloudflare Turnstile Verification Endpoint
+// ==========================================
+app.post('/api/verify-turnstile', rateLimiter, async (req, res) => {
+    const { token } = req.body;
+    const ip = req.headers['x-forwarded-for']?.split(',')[0] || req.ip;
+    
+    if (!token) {
+        return res.json({ success: false, message: 'Missing Turnstile token' });
+    }
+    
+    // Verify with Cloudflare (FREE!)
+    const result = await verifyTurnstile(token, ip);
+    
+    if (!result.success) {
+        console.log(`[Turnstile] Verification failed: ${JSON.stringify(result)}`);
+        return res.json({ 
+            success: false, 
+            message: 'Security verification failed'
+        });
+    }
+    
+    console.log(`[Turnstile] Verified successfully`);
+    res.json({ 
+        success: true, 
+        message: 'Security verified'
+    });
 });
 
 // ==========================================
