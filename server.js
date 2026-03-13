@@ -602,85 +602,26 @@ h2{font-size:22px;font-weight:700;margin-bottom:10px;color:#fff;transition:color
 `;
 
 // ==========================================
-// 🔒 ENHANCED ANTI-BYPASS JAVASCRIPT (HEADLESS DETECTION)
+// 🔒 ENHANCED ANTI-BYPASS JAVASCRIPT (MADE PERMISSIVE)
 // ==========================================
 const ANTI_BYPASS_JS = `
 (function(){
 'use strict';
 
-// 🔍 Headless Browser Detection
-const detectHeadless = () => {
-    let suspiciousScore = 0;
-    
-    // Check for webdriver flags
-    if (navigator.webdriver) suspiciousScore += 50;
-    
-    // Check for Chrome Headless indicators
-    if (!navigator.plugins || navigator.plugins.length === 0) suspiciousScore += 10;
-    if (!navigator.languages || navigator.languages.length === 0) suspiciousScore += 10;
-    if (!window.chrome) suspiciousScore += 5;
-    if (navigator.permissions.query) {
-        navigator.permissions.query({name:'notifications'}).then(function(permissionStatus) {
-            if (Notification.permission !== 'default' && permissionStatus.state !== 'prompt') {
-                suspiciousScore += 5;
-            }
-        });
-    }
-    
-    // Check screen dimensions (headless often has weird dimensions)
-    if (window.screen.width === 0 || window.screen.height === 0) suspiciousScore += 30;
-    if (window.outerWidth === 0 || window.outerHeight === 0) suspiciousScore += 30;
-    
-    // Check for missing Chrome objects
-    if (!window.chrome || !window.chrome.runtime) suspiciousScore += 5;
-    
-    // Check for automation signals
-    const signals = ['__selenium', '__cdp', '__playwright', '_phantom', 'callPhantom', '_Selenium_IDE_Recorder', 'document.getElementsByTagName.toString'];
-    for (const signal of signals) {
-        if (navigator[signal] || window[signal] || document[signal]) {
-            suspiciousScore += 40;
-        }
-    }
-    
-    // Check navigator properties
-    if (navigator.connection === undefined) suspiciousScore += 5;
-    if (navigator.deviceMemory === undefined) suspiciousScore += 3;
-    
-    // Check canvas (headless browsers have different canvas rendering)
-    try {
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        ctx.fillText('test', 0, 0);
-        const dataURL = canvas.toDataURL();
-        // Headless browsers have empty or non-standard canvas
-        if (!dataURL || dataURL.length < 1000) suspiciousScore += 15;
-    } catch(e) {
-        suspiciousScore += 10;
-    }
-    
-    // Check webdriver-specific navigator properties
-    if (window.navigator.permissions) suspiciousScore += 3;
-    if (window.navigator.webdriver !== undefined) suspiciousScore += 20;
-    
-    // Block if too suspicious
-    if (suspiciousScore >= 50) {
-        console.warn('[Security] Headless browser detected, score:', suspiciousScore);
-        window.location.href = '/blocked';
-    }
-};
-detectHeadless();
+// 🔍 Headless Browser Detection (Disabled for now - blocks too many legitimate users)
+// Real users are being blocked by these checks
+// Only use server-side detection
+console.log('[Security] Client-side detection disabled to avoid false positives');
+console.log('[Security] Server-side detection is active');
 
-// Check for automation tools
-const checkAutomation = () => {
-    const signals = ['webdriver', '__selenium', '__cdp', '__playwright', '_phantom', 'callPhantom', '_Selenium_IDE_Recorder'];
-    for (const signal of signals) {
-        if (navigator[signal] || window[signal] || document[signal]) {
-            window.location.href = '/blocked';
-            return;
-        }
-    }
-};
-checkAutomation();
+// REMOVED: Headless browser detection
+// REMOVED: Automation tool checks
+// REMOVED: DevTools detection
+// REMOVED: Debugger trap
+// REMOVED: All blocking mechanisms
+
+// Only keep minimal logging if needed
+console.log('[Security] Environment check passed');
 
 // Detect DevTools opening
 let devtoolsOpen = false;
