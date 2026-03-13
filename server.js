@@ -9,22 +9,20 @@ const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 🔑 API Key - With fallback to prevent crash
-const API_SECRET_KEY = process.env.API_SECRET_KEY || 'testing-Nazki';
+// 🔑 API Key - Generate random key if not set (no hardcoded defaults)
+let API_SECRET_KEY = process.env.API_SECRET_KEY;
 
-// Fallback for Vercel deployment
 if (!API_SECRET_KEY) {
-    console.warn('⚠️  API_SECRET_KEY not set, using fallback key');
-    console.warn('⚠️  Set API_SECRET_KEY in environment variables for production');
+    console.log('🔒 API_SECRET_KEY not set, generating secure random key');
     API_SECRET_KEY = crypto.randomBytes(32).toString('base64');
 }
 
 if (API_SECRET_KEY.length < 32) {
-    console.warn('⚠️  API_SECRET_KEY too short, padding to 32 chars');
+    console.log('🔒 API_SECRET_KEY too short, padding to 32 chars');
     API_SECRET_KEY = API_SECRET_KEY.padEnd(32, crypto.randomBytes(32).toString('base64'));
 }
 
-console.log('✅ API_SECRET_KEY configured successfully');
+console.log('✅ API_SECRET_KEY configured successfully (key length:', API_SECRET_KEY.length, ')');
 
 // 🛡️ Cloudflare Turnstile Configuration (FREE)
 const TURNSTILE_SITE_KEY = process.env.TURNSTILE_SITE_KEY || '0x4AAAAAACqSQ5npeA0O-71d';
