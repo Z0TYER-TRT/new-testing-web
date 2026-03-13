@@ -248,15 +248,6 @@ function trackIPBehavior(req, res, next) {
     
     next();
 }
-    
-    // Check for missing user agent
-    if (!userAgent) {
-        console.log(`[Headless] BLOCKED: No User-Agent`);
-        return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bot Detected</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🤖 Automated Access Blocked</h1></div></body></html>');
-    }
-    
-    next();
-}
 
 app.use(helmet({
     contentSecurityPolicy: {
