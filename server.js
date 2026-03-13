@@ -13,8 +13,8 @@ const PORT = process.env.PORT || 3000;
 const API_SECRET_KEY = process.env.API_SECRET_KEY || 'Aniketsexvideo404SecureKey2023ForProductionUse';
 
 // 🛡️ Cloudflare Turnstile Configuration (FREE)
-const TURNSTILE_SITE_KEY = process.env.TURNSTILE_SITE_KEY || '0x4AAAAAAAxxxxxxxxxxxx';
-const TURNSTILE_SECRET_KEY = process.env.TURNSTILE_SECRET_KEY || '0x4AAAAAAAyyyyyyyyyyyy';
+const TURNSTILE_SITE_KEY = process.env.TURNSTILE_SITE_KEY || '0x4AAAAAACqSQ5npeA0O-71d';
+const TURNSTILE_SECRET_KEY = process.env.TURNSTILE_SECRET_KEY || '0x4AAAAAACqSQ_dxQjhwLcwWg6Hlt8S2-3Q';
 
 console.log('=================================');
 console.log('🚀 Server Starting...');
