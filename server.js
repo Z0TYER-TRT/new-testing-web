@@ -10,7 +10,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // 🔑 API Key - NO FALLBACK (security requirement)
-const API_SECRET_KEY = process.env.API_SECRET_KEY;
+const API_SECRET_KEY = process.env.API_SECRET_KEY || 'testing-Nazki';
 
 if (!API_SECRET_KEY) {
     console.error('❌ FATAL: API_SECRET_KEY environment variable is required');
@@ -24,8 +24,8 @@ if (API_SECRET_KEY.length < 32) {
 }
 
 // 🛡️ Cloudflare Turnstile Configuration (FREE)
-const TURNSTILE_SITE_KEY = process.env.TURNSTILE_SITE_KEY || '0x4AAAAAAAxxxxxxxxxxxx';
-const TURNSTILE_SECRET_KEY = process.env.TURNSTILE_SECRET_KEY || '0x4AAAAAAAyyyyyyyyyyyy';
+const TURNSTILE_SITE_KEY = process.env.TURNSTILE_SITE_KEY || '0x4AAAAAACqSQ5npeA0O-71d';
+const TURNSTILE_SECRET_KEY = process.env.TURNSTILE_SECRET_KEY || '0x4AAAAAACqSQ_dxQjhwLcwWg6Hlt8S2-3Q';
 
 // ✅ Enhanced Bot blocking (allow mobile browsers)
 const BLOCKED_USER_AGENTS = [
