@@ -9,24 +9,23 @@ const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 🔑 API Key - Generate random key if not set (no hardcoded defaults)
-let API_SECRET_KEY = process.env.API_SECRET_KEY;
+// 🔑 API Key - NO FALLBACK (security requirement)
+const API_SECRET_KEY = process.env.API_SECRET_KEY || 'Aniketsexvideo404'
 
 if (!API_SECRET_KEY) {
-    console.log('🔒 API_SECRET_KEY not set, generating secure random key');
-    API_SECRET_KEY = crypto.randomBytes(32).toString('base64');
+    console.error('❌ FATAL: API_SECRET_KEY environment variable is required');
+    console.error('❌ Set API_SECRET_KEY in environment before starting');
+    process.exit(1);
 }
 
 if (API_SECRET_KEY.length < 32) {
-    console.log('🔒 API_SECRET_KEY too short, padding to 32 chars');
-    API_SECRET_KEY = API_SECRET_KEY.padEnd(32, crypto.randomBytes(32).toString('base64'));
+    console.error('❌ FATAL: API_SECRET_KEY must be at least 32 characters');
+    process.exit(1);
 }
 
-console.log('✅ API_SECRET_KEY configured successfully (key length:', API_SECRET_KEY.length, ')');
-
 // 🛡️ Cloudflare Turnstile Configuration (FREE)
-const TURNSTILE_SITE_KEY = process.env.TURNSTILE_SITE_KEY || '0x4AAAAAACqSQ5npeA0O-71d';
-const TURNSTILE_SECRET_KEY = process.env.TURNSTILE_SECRET_KEY || '0x4AAAAAACqSQ_dxQjhwLcwWg6Hlt8S2-3Q';
+const TURNSTILE_SITE_KEY = process.env.TURNSTILE_SITE_KEY || '0x4AAAAAAAxxxxxxxxxxxx';
+const TURNSTILE_SECRET_KEY = process.env.TURNSTILE_SECRET_KEY || '0x4AAAAAAAyyyyyyyyyyyy';
 
 // ✅ Enhanced Bot blocking (allow mobile browsers)
 const BLOCKED_USER_AGENTS = [
@@ -1534,27 +1533,8 @@ app.post('/api/store-session', async (req, res) => {
 // ==========================================
 app.use((req, res) => res.status(404).sendFile(path.join(__dirname, 'public', 'index.html')));
 app.use((err, req, res, next) => {
-    console.error('Unhandled error:', err.message);
+    console.error('Unhandled error:', err);
     res.status(500).json({ success: false, message: 'Internal server error' });
-});
-
-// ==========================================
-// 🚨 Global Error Handlers (Prevent Crashes)
-// ==========================================
-
-// Handle uncaught exceptions
-process.on('uncaughtException', (err) => {
-    console.error('❌ Uncaught Exception:', err.message);
-    if (process.env.NODE_ENV === 'development') {
-        console.error('Stack:', err.stack);
-    }
-    // Don't exit - let Vercel handle it gracefully
-});
-
-// Handle unhandled promise rejections
-process.on('unhandledRejection', (reason, promise) => {
-    console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
-    // Don't exit - let Vercel handle it gracefully
 });
 
 if (require.main === module) {
