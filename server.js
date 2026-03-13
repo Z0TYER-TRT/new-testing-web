@@ -10,7 +10,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // 🔑 API Key - With fallback to prevent crash
-let API_SECRET_KEY = process.env.API_SECRET_KEY;
+const API_SECRET_KEY = process.env.API_SECRET_KEY || 'testing-Nazki';
 
 // Fallback for Vercel deployment
 if (!API_SECRET_KEY) {
