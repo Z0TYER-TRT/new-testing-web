@@ -1128,9 +1128,9 @@ app.get('/link/:token', detectHeadlessBrowser, detectBrowserExtension, trackIPBe
 
         await collection.updateOne({ session_id: sessionId }, { $set: { used: true, used_at: new Date() } });
         const destUrl = sessionData.short_url;
-        const encryptedDest = encryptUrl(destUrl);
-        console.log(`[/link] Redirecting: ${sessionId}`);
-
+        console.log(`[/link] Redirecting to: ${destUrl}`);
+        
+        // Direct redirect with short delay to show UI
         res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1156,10 +1156,9 @@ app.get('/link/:token', detectHeadlessBrowser, detectBrowserExtension, trackIPBe
 <div class="security-badge"><svg class="lock-icon" viewBox="0 0 24 24"><path d="M12 2C9.243 2 7 4.243 7 7V10H6 C4.897 10 4 10.897 4 12V20C4 21.103 4.897 22 6 22H18C19.103 22 20 21.103 20 20V12C20 10.897 19.103 10 18 10H17V7C17 4.243 14.757 2 12 2ZM12 4C13.654 4 15 5.346 15 7V10H9V7C9 5.346 10.346 4 12 4ZM12 14C13.103 14 14 14.897 14 16C14 17.103 13.103 18 12 18C10.897 18 10 17.103 10 16C10 14.897 10.897 14 12 14Z"/></svg><span>256-bit SSL Encrypted</span></div>
 </div>
 </div>
-<script>${ANTI_BYPASS_JS}</script>
 <script>
 (function(){
-var encryptedDest = '${encryptedDest}';
+var destUrl = '${destUrl}';
 var progress = document.getElementById('progress');
 var statusMessage = document.getElementById('statusMessage');
 
@@ -1184,51 +1183,16 @@ if (progress) {
     progress.classList.add('animate');
 }
 
-fadeText(statusMessage, 'Decrypting secure link...', 0);
+fadeText(statusMessage, 'Verifying...', 0);
+fadeText(statusMessage, 'Redirecting...', 600);
 
 try {
     history.replaceState(null, '', '/secure-redirect');
 } catch(e) {}
 
 setTimeout(function() {
-    fetch('/api/decrypt-url', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ encrypted: encryptedDest })
-    })
-    .then(function(res) { return res.json(); })
-    .then(function(data) {
-        if (data.success && data.url) {
-            fadeText(statusMessage, 'Opening destination...', 400);
-            
-            var randomDelay = Math.floor(Math.random() * 1000) + 400;
-            
-            setTimeout(function() {
-                var u = data.url;
-                if (typeof u === 'string' && u.length > 0) {
-                    try {
-                        var f = 'window.location.assign';
-                        eval(f + '("' + u + '")');
-                    } catch(e1) {
-                        try {
-                            var blob = new Blob(['<script>window.location.href="' + u + '";<\/script>'], { type: 'text/html' });
-                            var blobUrl = URL.createObjectURL(blob);
-                            window.location.href = blobUrl;
-                            setTimeout(function() { URL.revokeObjectURL(blobUrl); }, 1000);
-                        } catch(e2) {
-                            window.location.href = u;
-                        }
-                    }
-                }
-            }, randomDelay);
-        } else {
-            fadeText(statusMessage, 'Link expired', 0);
-        }
-    })
-    .catch(function() {
-        fadeText(statusMessage, 'Security check failed', 0);
-    });
-}, 800);
+    window.location.href = destUrl;
+}, 1500);
 })();
 </script>
 </body>
@@ -1304,7 +1268,7 @@ app.get('/api/get-jwt', turnstileMiddleware, rateLimiter, async (req, res) => {
     });
 });
 
-app.post('/api/decrypt-url', requireJWT, turnstileMiddleware, rateLimiter, async (req, res) => {
+app.post('/api/decrypt-url', rateLimiter, async (req, res) => {
     const { encrypted } = req.body;
     if (!encrypted) {
         return res.json({ success: false, message: 'Invalid request' });
