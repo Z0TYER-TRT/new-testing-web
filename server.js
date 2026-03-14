@@ -949,6 +949,10 @@ app.get('/go/:sessionId', detectHeadlessBrowser, detectBrowserExtension, trackIP
 </div>
 <h2 id="title">🚀 Human Verification</h2>
 <p class="message" id="message">Click the button below to continue</p>
+
+<!-- Invisible Turnstile widget -->
+<div id="cf-turnstile" data-sitekey="${turnstileSiteKey}" data-callback="turnstileCallback" data-size="invisible" style="display:none;"></div>
+
 <button id="clickVerifyBtn" class="click-verify-btn">👆 Click to Continue</button>
 <div class="countdown-box" id="countdownBox"><span id="countdown">3</span> seconds remaining</div>
 <div class="progress-bar" id="progressBar" style="display:none;"><div class="progress" id="progress"></div></div>
@@ -973,6 +977,7 @@ var loaderWrapper = document.getElementById('loaderWrapper');
 var checkMark = document.getElementById('checkMark');
 var title = document.getElementById('title');
 var message = document.getElementById('message');
+var turnstileWidget = document.getElementById('cf-turnstile');
 
 function fadeText(element, text, delay) {
     delay = delay || 0;
@@ -986,6 +991,36 @@ function fadeText(element, text, delay) {
     }, delay);
 }
 
+// Turnstile callback function (called when captcha is solved)
+window.turnstileCallback = function(token) {
+    console.log('[Turnstile] Token received');
+    
+    // Send token to server for verification
+    fetch('/api/verify-turnstile-redirect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: token })
+    })
+    .then(function(res) { return res.json(); })
+    .then(function(data) {
+        if (data.success) {
+            btn.textContent = '✓ Verified!';
+            proceedAfterVerification();
+        } else {
+            btn.disabled = false;
+            btn.textContent = '⚠️ Verification Failed';
+            btn.style.background = 'linear-gradient(135deg, #e74c3c, #c0392b)';
+            fadeText(statusMessage, data.message || 'Security check failed', 0);
+        }
+    })
+    .catch(function(err) {
+        console.error('[Turnstile] Error:', err);
+        // Fail open - allow if Turnstile fails
+        btn.textContent = '✓ Verified!';
+        proceedAfterVerification();
+    });
+};
+
 function startVerification() {
     if (clickVerified) return;
     
@@ -993,12 +1028,37 @@ function startVerification() {
     btn.textContent = '🔒 Verifying...';
     fadeText(statusMessage, 'Running security check...', 0);
     
+    // Run human behavior check locally
     if (typeof window.verifyHuman === 'function') {
         window.verifyHuman();
     }
     
-    btn.textContent = '✓ Verified!';
-    proceedAfterVerification();
+    // Trigger Turnstile widget
+    if (typeof turnstile !== 'undefined' && turnstileWidget) {
+        // Use execute for invisible widget
+        try {
+            turnstile.execute(turnstileWidget, {
+                callback: window.turnstileCallback
+            });
+        } catch(err) {
+            console.error('[Turnstile] Execute error:', err);
+            // Fallback - try direct call
+            try {
+                turnstile.execute('${turnstileSiteKey}', {
+                    callback: window.turnstileCallback
+                });
+            } catch(e2) {
+                console.warn('[Turnstile] Both methods failed, proceeding anyway');
+                btn.textContent = '✓ Verified!';
+                proceedAfterVerification();
+            }
+        }
+    } else {
+        // Turnstile not loaded - proceed anyway (fail open)
+        console.warn('[Turnstile] Not loaded, proceeding anyway');
+        btn.textContent = '✓ Verified!';
+        proceedAfterVerification();
+    }
 }
 
 function proceedAfterVerification() {
@@ -1266,6 +1326,32 @@ app.get('/api/get-jwt', turnstileMiddleware, rateLimiter, async (req, res) => {
         success: true, 
         token: jwtToken 
     });
+});
+
+// Turnstile verification endpoint for /go page
+app.post('/api/verify-turnstile-redirect', rateLimiter, async (req, res) => {
+    const { token } = req.body;
+    const ip = req.headers['x-forwarded-for']?.split(',')[0] || req.ip;
+    
+    if (!token) {
+        return res.json({ success: false, message: 'Missing Turnstile token' });
+    }
+    
+    try {
+        const result = await verifyTurnstile(token, ip);
+        
+        if (!result.success) {
+            console.log(`[Turnstile] Verification failed: ${JSON.stringify(result)}`);
+            return res.json({ success: false, message: 'Turnstile verification failed' });
+        }
+        
+        console.log(`[Turnstile] Verified successfully`);
+        res.json({ success: true, message: 'Security verified' });
+    } catch (error) {
+        console.error('[Turnstile] Verification error:', error.message);
+        // Fail open - allow if Turnstile service is down
+        res.json({ success: true, message: 'Security verified' });
+    }
 });
 
 app.post('/api/decrypt-url', rateLimiter, async (req, res) => {
