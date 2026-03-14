@@ -880,6 +880,7 @@ app.get('/go/:sessionId', detectHeadlessBrowser, detectBrowserExtension, trackIP
         const linkUrl = sanitizeForJS(`https://${host}/link/${redirectToken}?sid=${sessionId}`);
         
         const turnstileSiteKey = process.env.TURNSTILE_SITE_KEY || '0x4AAAAAAAxxxxxxxxxxxx';
+        console.log(`[Turnstile] Site Key: ${turnstileSiteKey}`);
         
         res.send(`<!DOCTYPE html>
 <html lang="en">
@@ -998,13 +999,28 @@ function startVerification() {
         window.verifyHuman();
     }
     
-    // Trigger Turnstile widget
-    if (typeof turnstile !== 'undefined' && turnstileWidget) {
+    // Trigger Turnstile widget with timeout
+    const turnstileLoaded = typeof turnstile !== 'undefined';
+    const turnstileWidgetExists = turnstileWidget !== null;
+    
+    console.log(`[Turnstile] Check - Loaded: ${turnstileLoaded}, Widget exists: ${turnstileWidgetExists}`);
+    
+    if (turnstileLoaded && turnstileWidgetExists) {
         // Use execute for invisible widget
         try {
             turnstile.execute(turnstileWidget, {
                 callback: window.turnstileCallback
             });
+            // Set timeout to handle cases where execute succeeds but callback never fires
+            setTimeout(() => {
+                if (!clickVerified) {
+                    console.error('[Turnstile] Callback timeout - no response from Turnstile');
+                    btn.disabled = false;
+                    btn.textContent = '⚠️ Security Check Failed';
+                    btn.style.background = 'linear-gradient(135deg, #e74c3c, #c0392b)';
+                    fadeText(statusMessage, 'Security check timed out. Please try again.', 0);
+                }
+            }, 10000); // 10 second timeout
         } catch(err) {
             console.error('[Turnstile] Execute error:', err);
             // Fallback - try direct call
@@ -1012,21 +1028,50 @@ function startVerification() {
                 turnstile.execute('${turnstileSiteKey}', {
                     callback: window.turnstileCallback
                 });
+                // Set timeout for fallback as well
+                setTimeout(() => {
+                    if (!clickVerified) {
+                        console.error('[Turnstile] Fallback callback timeout');
+                        btn.disabled = false;
+                        btn.textContent = '⚠️ Security Check Failed';
+                        btn.style.background = 'linear-gradient(135deg, #e74c3c, #c0392b)';
+                        fadeText(statusMessage, 'Security check timed out. Please try again.', 0);
+                    }
+                }, 10000);
             } catch(e2) {
-                console.error('[Turnstile] Both methods failed');
+                console.error('[Turnstile] Both methods failed:', e2);
                 btn.disabled = false;
                 btn.textContent = '⚠️ Security Check Failed';
                 btn.style.background = 'linear-gradient(135deg, #e74c3c, #c0392b)';
-                fadeText(statusMessage, 'Could not load security check. Please refresh the page.', 0);
+                fadeText(statusMessage, 'Could not initialize security check. Please refresh the page.', 0);
             }
         }
     } else {
-        // Turnstile not loaded - show error (fail closed)
-        console.error('[Turnstile] Not loaded');
+        // Turnstile not loaded - show error with more details
+        console.error('[Turnstile] Not loaded - Checking global turnstile object:', typeof turnstile !== 'undefined' ? 'Defined' : 'Undefined');
+        console.error('[Turnstile] Widget element:', turnstileWidget);
         btn.disabled = false;
         btn.textContent = '⚠️ Security Check Failed';
         btn.style.background = 'linear-gradient(135deg, #e74c3c, #c0392b)';
         fadeText(statusMessage, 'Could not load security check. Please refresh the page.', 0);
+        
+        // Try to reload the Turnstile script after a delay
+        setTimeout(() => {
+            if (!clickVerified && typeof turnstile === 'undefined') {
+                console.log('[Turnstile] Attempting to reload Turnstile script...');
+                const script = document.createElement('script');
+                script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js';
+                script.async = true;
+                script.defer = true;
+                script.onload = () => {
+                    console.log('[Turnstile] Script reloaded successfully');
+                };
+                script.onerror = () => {
+                    console.error('[Turnstile] Failed to reload script');
+                };
+                document.head.appendChild(script);
+            }
+        }, 3000);
     }
 }
 
