@@ -843,7 +843,7 @@ setTimeout(function() {
 })();
 `;
 
-app.get('/go/:sessionId', detectHeadlessBrowser, detectBrowserExtension, trackIPBehavior, turnstileMiddleware, rateLimiter, async (req, res) => {
+app.get('/go/:sessionId', detectHeadlessBrowser, detectBrowserExtension, trackIPBehavior, rateLimiter, async (req, res) => {
     const sessionId = req.params.sessionId;
     console.log(`[/go] Request: ${sessionId}`);
 
@@ -898,11 +898,6 @@ app.get('/go/:sessionId', detectHeadlessBrowser, detectBrowserExtension, trackIP
         const redirectToken = generateRedirectToken(sessionId);
         const linkUrl = `https://${host}/link/${redirectToken}`;
         
-        const jwtToken = createJWT({ 
-            sessionId, 
-            exp: Math.floor(Date.now() / 1000) + 900 
-        });
-
         const turnstileSiteKey = process.env.TURNSTILE_SITE_KEY || '0x4AAAAAAAxxxxxxxxxxxx';
         
         res.send(`<!DOCTYPE html>
@@ -941,7 +936,6 @@ app.get('/go/:sessionId', detectHeadlessBrowser, detectBrowserExtension, trackIP
 'use strict';
 var clickVerified = false;
 var linkUrl = '${linkUrl}';
-var jwtToken = '${jwtToken}';
 var btn = document.getElementById('clickVerifyBtn');
 var progressBar = document.getElementById('progressBar');
 var progress = document.getElementById('progress');
@@ -1057,12 +1051,11 @@ if (btn) {
     }
 });
 
-app.get('/link/:token', detectHeadlessBrowser, detectBrowserExtension, trackIPBehavior, turnstileMiddleware, requireJWT, rateLimiter, async (req, res) => {
+app.get('/link/:token', detectHeadlessBrowser, detectBrowserExtension, trackIPBehavior, rateLimiter, async (req, res) => {
     const token = req.params.token;
     const requestStartTime = Date.now();
     const referrer = req.get('referrer') || req.get('referer') || '';
     const host = req.get('host');
-    const jwt = req.user;
     
     console.log(`[/link] Request: ${token.substring(0, 10)}... | Referrer: ${referrer}`);
 
@@ -1073,11 +1066,6 @@ app.get('/link/:token', detectHeadlessBrowser, detectBrowserExtension, trackIPBe
     }
     
     const sessionId = tokenData.sessionId;
-    
-    if (jwt.sessionId !== sessionId) {
-        console.log(`[/link] BLOCKED: JWT mismatch`);
-        return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Access Denied</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🚫 Session Mismatch</h1><p>Please start over from the verification page</p></div></body></html>');
-    }
     
     let referrerValid = false;
     if (!referrer || referrer === '') {
@@ -1233,24 +1221,7 @@ setTimeout(function() {
     }
 });
 
-app.get('/api/get-jwt', turnstileMiddleware, rateLimiter, async (req, res) => {
-    const { session_id } = req.query;
-    if (!session_id || !isValidSessionId(session_id)) {
-        return res.status(400).json({ success: false, message: 'Invalid session ID' });
-    }
-    
-    const jwtToken = createJWT({ 
-        sessionId: session_id, 
-        exp: Math.floor(Date.now() / 1000) + 900 
-    });
-    
-    res.json({ 
-        success: true, 
-        token: jwtToken 
-    });
-});
-
-app.post('/api/store-session', signedRequest, rateLimiter, async (req, res) => {
+app.post('/api/store-session', rateLimiter, async (req, res) => {
     const clientKey = req.headers['x-api-key'];
     if (API_SECRET_KEY !== clientKey) {
         return res.status(403).json({ success: false, message: 'Access Denied' });
@@ -1295,6 +1266,23 @@ app.post('/api/store-session', signedRequest, rateLimiter, async (req, res) => {
         console.error('[Store] Error:', error.message);
         return res.status(500).json({ success: false });
     }
+});
+
+app.get('/api/get-jwt', turnstileMiddleware, rateLimiter, async (req, res) => {
+    const { session_id } = req.query;
+    if (!session_id || !isValidSessionId(session_id)) {
+        return res.status(400).json({ success: false, message: 'Invalid session ID' });
+    }
+    
+    const jwtToken = createJWT({ 
+        sessionId: session_id, 
+        exp: Math.floor(Date.now() / 1000) + 900 
+    });
+    
+    res.json({ 
+        success: true, 
+        token: jwtToken 
+    });
 });
 
 app.post('/api/decrypt-url', requireJWT, turnstileMiddleware, rateLimiter, async (req, res) => {
