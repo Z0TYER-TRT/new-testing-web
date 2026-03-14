@@ -1003,7 +1003,7 @@ function startVerification() {
     const turnstileLoaded = typeof turnstile !== 'undefined';
     const turnstileWidgetExists = turnstileWidget !== null;
     
-    console.log(`[Turnstile] Check - Loaded: ${turnstileLoaded}, Widget exists: ${turnstileWidgetExists}`);
+    console.log('[Turnstile] Check - Loaded: ' + turnstileLoaded + ', Widget exists: ' + turnstileWidgetExists);
     
     if (turnstileLoaded && turnstileWidgetExists) {
         // Use execute for invisible widget
