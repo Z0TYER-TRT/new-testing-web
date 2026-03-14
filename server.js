@@ -756,8 +756,7 @@ async function verifyTurnstile(token, ip) {
     }
 }
 
-const SHARED_STYLES = `
-*{margin:0;padding:0;box-sizing:border-box}
+const SHARED_STYLES = String.raw`*{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;background:linear-gradient(135deg,#1a1a2e 0%,#16213e 100%);display:flex;justify-content:center;align-items:center;min-height:100vh;padding:20px;color:#fff;overflow-x:hidden;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
 .container{background:rgba(255,255,255,0.08);padding:35px 25px;border-radius:20px;border:1px solid rgba(255,255,255,0.12);text-align:center;width:100%;max-width:380px;animation:fadeIn 0.5s cubic-bezier(0.4,0,0.2,1);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);box-shadow:0 8px 32px rgba(0,0,0,0.3)}
 @keyframes fadeIn{from{opacity:0;transform:translateY(25px) scale(0.98)}to{opacity:1;transform:translateY(0) scale(1)}}
@@ -803,8 +802,7 @@ h2{font-size:22px;font-weight:700;margin-bottom:10px;color:#fff;transition:color
 @media(max-width:400px){.container{padding:28px 20px}h2{font-size:20px}.icon-container{width:90px;height:130px}.shield-wrapper{width:70px;height:70px}.loader{width:35px;height:35px}.click-verify-btn{padding:12px 28px;font-size:15px}}
 `;
 
-const ANTI_BYPASS_JS = `
-(function(){
+const ANTI_BYPASS_JS = String.raw`(function(){
 'use strict';
 
 console.log('[Security] Client-side protection mode: Active');
