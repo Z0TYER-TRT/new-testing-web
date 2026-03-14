@@ -5,19 +5,20 @@ const compression = require('compression');
 const crypto = require('crypto');
 const helmet = require('helmet');
 const cors = require('cors');
+const jwt = require('jsonwebtoken');
+const rateLimit = require('express-rate-limit');
 
 const app = express();
 
-// Handle both Vercel serverless and本地 development
 if (process.env.NODE_ENV !== 'production') {
     app.set('trust proxy', true);
 }
 const PORT = process.env.PORT || 3000;
 
-// 🔑 API Key - Hardcoded for Vercel deployment (32+ chars)
 const API_SECRET_KEY = process.env.API_SECRET_KEY || 'Aniketsexvideo404SecureKey2023ForProductionUse';
 
-// 🛡️ Cloudflare Turnstile Configuration (FREE)
+const JWT_SECRET = process.env.JWT_SECRET || 'AniketJWTSecret2023ForProductionUseSecureKey';
+
 const TURNSTILE_SITE_KEY = process.env.TURNSTILE_SITE_KEY || '0x4AAAAAACqSQ5npeA0O-71d';
 const TURNSTILE_SECRET_KEY = process.env.TURNSTILE_SECRET_KEY || '0x4AAAAAACqSQ_dxQjhwLcwWg6Hlt8S2-3Q';
 
@@ -26,32 +27,36 @@ console.log('🚀 Server Starting...');
 console.log('=================================');
 console.log('✅ API_SECRET_KEY configured successfully');
 console.log('✅ Turnstile keys ready');
+console.log('✅ JWT authentication enabled');
 console.log('✅ Database connections ready (3 shards)');
 console.log('---------------------------------');
 
-// ✅ Enhanced Bot blocking (allow mobile browsers)
 const BLOCKED_USER_AGENTS = [
     'python-requests', 'scrapy', 'selenium', 'puppeteer',
     'playwright', 'headless', 'chromedriver', 'geckodriver',
     'phantomjs', 'slimerjs', 'htmlunit', 'jsdom'
 ];
 
+const BLOCKED_EXTENSIONS = [
+    'chrome-extension://', 'moz-extension://', 'edge-extension://', 'safari-extension://',
+    'ublock', 'adblock', 'tampermonkey', 'greasemonkey', 'violentmonkey', 'ghostery'
+];
+
 const RATE_LIMIT_WINDOW = 60000;
 const MAX_REQUESTS_PER_IP = 100;
 
-// 🗄️ Database Shards
 const DB_SHARDS = [
     process.env.MONGODB_URI_1 || 'mongodb+srv://redirect-kawaii:6pYMr5v6WznRduAL@cluster0.cqnnbgi.mongodb.net/redirect_service?appName=Cluster0',
     process.env.MONGODB_URI_2 || 'mongodb+srv://redirect-kawaii2:HWoekNn54skXZ8GA@cluster1.gigfzvo.mongodb.net/redirect_service?appName=Cluster1',
     process.env.MONGODB_URI_3 || 'mongodb+srv://redirect-kawaii3:wiCwqRkusOUoSX8J@cluster2.brkkpuv.mongodb.net/redirect_service?appName=Cluster2'
-].filter(uri => uri && uri.length > 0); // Remove any undefined/empty URIs
+].filter(uri => uri && uri.length > 0);
 
-// 🔐 Connection caching
 const mongoClients = new Map();
 const mongoCollections = new Map();
-
-// 🧩 Challenge-Response System (Prevents automated tools)
-const challenges = new Map();
+const activeSessions = new Map();
+const sessionLocks = new Map();
+const behaviorTracking = new Map();
+const requestSignatures = new Map();
 
 function generateChallenge() {
     const challenge = {
@@ -60,12 +65,12 @@ function generateChallenge() {
         num1: Math.floor(Math.random() * 20) + 1,
         num2: Math.floor(Math.random() * 20) + 1,
         createdAt: Date.now(),
-        expiresAt: Date.now() + 300000 // 5 minutes
+        expiresAt: Date.now() + 300000
     };
     
+    const challenges = new Map();
     challenges.set(challenge.id, challenge);
     
-    // Cleanup expired challenges periodically
     setTimeout(() => {
         challenges.delete(challenge.id);
     }, 300000);
@@ -74,6 +79,7 @@ function generateChallenge() {
 }
 
 function verifyChallenge(challengeId, answer) {
+    const challenges = new Map();
     const challenge = challenges.get(challengeId);
     if (!challenge) return false;
     
@@ -97,21 +103,21 @@ function verifyChallenge(challengeId, answer) {
     return isCorrect;
 }
 
-// 🔐 One-time redirect tokens (prevents replay attacks)
-const redirectTokens = new Map();
-const TOKEN_EXPIRY = 60000; // 1 minute
-
 function generateRedirectToken(sessionId) {
+    const redirectTokens = new Map();
     const token = crypto.randomBytes(32).toString('base64url');
+    const TOKEN_EXPIRY = 60000;
     redirectTokens.set(token, {
         sessionId,
         createdAt: Date.now(),
-        expiresAt: Date.now() + TOKEN_EXPIRY
+        expiresAt: Date.now() + TOKEN_EXPIRY,
+        locked: true
     });
     return token;
 }
 
 function validateRedirectToken(token) {
+    const redirectTokens = new Map();
     const tokenData = redirectTokens.get(token);
     if (!tokenData) return null;
     
@@ -120,13 +126,12 @@ function validateRedirectToken(token) {
         return null;
     }
     
-    // Use token only once
     redirectTokens.delete(token);
     return tokenData;
 }
 
-// Cleanup expired tokens periodically
 setInterval(() => {
+    const redirectTokens = new Map();
     const now = Date.now();
     for (const [token, data] of redirectTokens) {
         if (now > data.expiresAt) {
@@ -135,16 +140,13 @@ setInterval(() => {
     }
 }, 30000);
 
-// 🛡️ Security Middleware
-// 🤖 Advanced Headless Browser Detection Middleware (Relaxed for real users)
 function detectHeadlessBrowser(req, res, next) {
     const userAgent = (req.get('User-Agent') || '').toLowerCase();
     
-    // Check for obvious automation tools ONLY
     const automationIndicators = [
         'python-requests',
         'scrapy',
-        'headless',  // Only if standalone, not "headlesschrome"
+        'headless',
         '__selenium',
         '__cdp',
         'phantomjs',
@@ -158,20 +160,21 @@ function detectHeadlessBrowser(req, res, next) {
         return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bot Detected</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🤖 Automated Access Blocked</h1></div></body></html>');
     }
     
-    // DO NOT block if missing user agent - let it through
-    // Some legitimate proxies or security tools remove UA
-    
-    // DO NOT check for Mozilla/5.0 requirement - not all browsers use it
-    
-    // DO NOT check for specific browser combinations - too many valid variations
-    
-    // DO NOT check for version format - too strict, blocks legitimate browsers
-    
     console.log(`[Headless] ACCESS GRANTED: ${userAgent.substring(0, 40)}...`);
     next();
 }
 
-// 🕵️ IP Behavior Tracking (Made much more permissive for real users)
+function detectBrowserExtension(req, res, next) {
+    const referer = req.get('referer') || req.get('referrer') || '';
+    
+    if (BLOCKED_EXTENSIONS.some(ext => referer.toLowerCase().includes(ext))) {
+        console.log(`[Extension] BLOCKED: ${referer.substring(0, 60)}...`);
+        return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Extension Blocked</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🚫 Browser Extension Detected</h1><p>Please disable extensions and try again</p></div></body></html>');
+    }
+    
+    next();
+}
+
 const ipBehaviorMap = new Map();
 
 function trackIPBehavior(req, res, next) {
@@ -190,31 +193,152 @@ function trackIPBehavior(req, res, next) {
     
     const ipData = ipBehaviorMap.get(ip);
     
-    // Check if currently blocked
     if (ipData.blocked && now < ipData.blockUntil) {
         console.log(`[IP Tracker] BLOCKED: ${ip} (until ${new Date(ipData.blockUntil).toISOString()})`);
         return res.status(429).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Rate Limited</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>⚠️ Too Many Requests</h1><p>Please try again in a few minutes</p></div></body></html>');
     }
     
-    // Record request
     ipData.requests.push(now);
     ipData.userAgents.add(userAgent);
     
-    // Clean old requests (older than 10 seconds)
     ipData.requests = ipData.requests.filter(time => now - time < 10000);
     
-    // Detect suspicious patterns (MADE MUCH MORE PERMISSIVE)
     const recentRequests = ipData.requests.length;
     
-    // Only block if EXTREMELY suspicious (>30 requests in 10 seconds)
     if (recentRequests > 30) {
         console.log(`[IP Tracker] SUSPICIOUS: ${ip} made ${recentRequests} requests in 10s`);
         ipData.blocked = true;
-        ipData.blockUntil = now + 600000; // Block for 10 minutes
+        ipData.blockUntil = now + 600000;
         return res.status(429).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Automated Detected</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🤖 Automated Access Detected</h1><p>Your IP has been temporarily blocked</p></div></body></html>');
     }
     
     next();
+}
+
+function generateBehavioralFingerprint(ip, userAgent) {
+    const key = `${ip}:${userAgent}`;
+    if (!behaviorTracking.has(key)) {
+        behaviorTracking.set(key, {
+            requestTimes: [],
+            patternScore: 0,
+            suspicious: false
+        });
+    }
+    const data = behaviorTracking.get(key);
+    const now = Date.now();
+    
+    data.requestTimes.push(now);
+    data.requestTimes = data.requestTimes.filter(t => now - t < 60000);
+    
+    if (data.requestTimes.length > 50) {
+        const intervals = [];
+        for (let i = 1; i < data.requestTimes.length; i++) {
+            intervals.push(data.requestTimes[i] - data.requestTimes[i-1]);
+        }
+        
+        if (intervals.length > 0) {
+            const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+            const variance = intervals.reduce((sum, interval) => sum + Math.pow(interval - avgInterval, 2), 0) / intervals.length;
+            const stdDev = Math.sqrt(variance);
+            
+            if (stdDev < 100 && data.requestTimes.length > 20) {
+                data.suspicious = true;
+                data.patternScore += 50;
+            }
+        }
+    }
+    
+    return data;
+}
+
+function generateRequestSignature(payload, timestamp) {
+    const data = JSON.stringify(payload) + timestamp + API_SECRET_KEY;
+    return crypto.createHmac('sha256', data).digest('hex');
+}
+
+function signedRequest(req, res, next) {
+    const signature = req.get('x-request-signature');
+    const timestamp = req.get('x-request-timestamp');
+    
+    if (!signature || !timestamp) {
+        return res.status(403).json({ success: false, message: 'Missing signature headers' });
+    }
+    
+    const now = Date.now();
+    if (now - parseInt(timestamp) > 30000) {
+        return res.status(403).json({ success: false, message: 'Request expired' });
+    }
+    
+    const expectedSignature = generateRequestSignature(req.body, timestamp);
+    if (signature !== expectedSignature) {
+        console.log(`[Signature] Invalid: ${signature}`);
+        return res.status(403).json({ success: false, message: 'Invalid request signature' });
+    }
+    
+    next();
+}
+
+function verifyJWT(token) {
+    try {
+        return jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
+    } catch (error) {
+        return null;
+    }
+}
+
+function createJWT(payload) {
+    return jwt.sign(payload, JWT_SECRET, { 
+        algorithm: 'HS256',
+        expiresIn: '15m'
+    });
+}
+
+function requireJWT(req, res, next) {
+    const authHeader = req.get('authorization');
+    
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ success: false, message: 'Missing authorization token' });
+    }
+    
+    const token = authHeader.substring(7);
+    const decoded = verifyJWT(token);
+    
+    if (!decoded) {
+        return res.status(401).json({ success: false, message: 'Invalid or expired token' });
+    }
+    
+    req.user = decoded;
+    next();
+}
+
+function lockSession(sessionId) {
+    const key = sessionId;
+    if (sessionLocks.has(key)) {
+        return false;
+    }
+    sessionLocks.set(key, {
+        locked: true,
+        lockedAt: Date.now()
+    });
+    
+    setTimeout(() => {
+        sessionLocks.delete(key);
+    }, 300000);
+    
+    return true;
+}
+
+function isSessionLocked(sessionId) {
+    const key = sessionId;
+    const lock = sessionLocks.get(key);
+    if (!lock) return false;
+    
+    if (Date.now() - lock.lockedAt > 300000) {
+        sessionLocks.delete(key);
+        return false;
+    }
+    
+    return true;
 }
 
 app.use(helmet({
@@ -239,7 +363,7 @@ app.use(helmet({
 app.use(cors({
     origin: true,
     methods: ['GET', 'POST'],
-    allowedHeaders: ['Content-Type', 'x-api-key'],
+    allowedHeaders: ['Content-Type', 'x-api-key', 'Authorization', 'x-request-signature', 'x-request-timestamp'],
     credentials: false
 }));
 
@@ -254,8 +378,8 @@ app.use((req, res, next) => {
     next();
 });
 
-// --- RATE LIMITER ---
 const ipRequestCounts = new Map();
+
 function rateLimiter(req, res, next) {
     const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || 'unknown';
     const now = Date.now();
@@ -284,7 +408,26 @@ function rateLimiter(req, res, next) {
     next();
 }
 
-// --- BOT GUARD ---
+function turnstileMiddleware(req, res, next) {
+    const turnstileToken = req.get('CF-Turnstile-Token') || req.body.turnstile_token;
+    
+    if (!turnstileToken) {
+        return res.status(403).json({ success: false, message: 'Turnstile verification required' });
+    }
+    
+    const ip = req.headers['x-forwarded-for']?.split(',')[0] || req.ip;
+    
+    verifyTurnstile(turnstileToken, ip).then(result => {
+        if (!result.success) {
+            return res.status(403).json({ success: false, message: 'Turnstile verification failed' });
+        }
+        next();
+    }).catch(err => {
+        console.error('[Turnstile] Verification error:', err.message);
+        return res.status(403).json({ success: false, message: 'Turnstile service error' });
+    });
+}
+
 function botGuard(req, res, next) {
     const userAgent = (req.get('User-Agent') || '').toLowerCase();
     if (!userAgent) return next();
@@ -295,7 +438,6 @@ function botGuard(req, res, next) {
     next();
 }
 
-// --- URL ENCRYPTION ---
 function encryptUrl(url) {
     const iv = crypto.randomBytes(16);
     const cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(API_SECRET_KEY.padEnd(32).slice(0, 32)), iv);
@@ -316,7 +458,6 @@ function decryptUrl(encrypted) {
     } catch (_) { return null; }
 }
 
-// --- URL VALIDATION ---
 function isValidUrl(string) {
     try {
         const url = new URL(string);
@@ -339,19 +480,15 @@ function getShardIndex(sessionId) {
     return parseInt(hash.substring(0, 8), 16) % DB_SHARDS.length;
 }
 
-// --- DATABASE CONNECTION ---
 async function getDatabase(index = 0) {
     const cacheKey = `shard_${index}`;
     
-    // Check for cached collection
     if (mongoCollections.has(cacheKey)) {
         const col = mongoCollections.get(cacheKey);
-        // Verify connection is still alive
         try {
             col.db.admin().ping();
             return col;
         } catch (e) {
-            // Connection is dead, clean up and reconnect
             console.log(`🔄 Connection stale, reconnecting Shard ${index + 1}...`);
             mongoClients.delete(cacheKey);
             mongoCollections.delete(cacheKey);
@@ -396,7 +533,6 @@ async function getDatabase(index = 0) {
     }
 }
 
-// --- Session Lookup ---
 async function findSession(sessionId) {
     const primaryShard = getShardIndex(sessionId);
     try {
@@ -422,7 +558,6 @@ async function findSession(sessionId) {
     return null;
 }
 
-// --- Cleanup (Disabled on Vercel) ---
 if (process.env.VERCEL !== '1') {
     setInterval(async () => {
         const cutoffDate = new Date(Date.now() - 30 * 60 * 1000);
@@ -442,17 +577,12 @@ app.use(compression());
 app.use(express.json({ limit: '10kb' }));
 app.use(express.urlencoded({ extended: true, limit: '10kb' }));
 
-// Timeout prevention for Vercel serverless functions
 if (process.env.VERCEL) {
     app.use((req, res, next) => {
-        res.setTimeout(10000); // 10 second timeout for Vercel
+        res.setTimeout(10000);
         next();
     });
 }
-
-// ==========================================
-// ⚡ PUBLIC ENDPOINTS
-// ==========================================
 
 app.use(express.static(path.join(__dirname, 'public'), {
     maxAge: '1h',
@@ -475,7 +605,6 @@ app.get('/health', async (req, res) => {
         collections: mongoCollections.size
     };
     
-    // Check MongoDB connectivity
     try {
         const primaryShard = await getDatabase(0);
         await primaryShard.db.admin().ping();
@@ -495,7 +624,6 @@ app.get('/access/:sessionId', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// 🔍 CAPTCHA Verification Endpoint (reCAPTCHA v3)
 async function verifyCaptcha(token, ip) {
     const RECAPTCHA_SECRET = process.env.RECAPTCHA_V3_SECRET;
     
@@ -524,14 +652,10 @@ async function verifyCaptcha(token, ip) {
         return data;
     } catch (error) {
         console.error('[CAPTCHA] Verification error:', error.message);
-        // Fail open - allow if CAPTCHA service is down
         return { success: true, score: 0.7 };
     }
 }
 
-// ==========================================
-// ❌ FREE: Cloudflare Turnstile Verification
-// ==========================================
 async function verifyTurnstile(token, ip) {
     if (!TURNSTILE_SECRET_KEY || TURNSTILE_SECRET_KEY.includes('yyyyyyyy')) {
         console.warn('[Turnstile] Not configured, skipping verification');
@@ -558,14 +682,10 @@ async function verifyTurnstile(token, ip) {
         return data;
     } catch (error) {
         console.error('[Turnstile] Verification error:', error.message);
-        // Fail open - allow if Turnstile service is down
         return { success: true, score: 0.7 };
     }
 }
 
-// ==========================================
-// 🎨 ENHANCED SHARED UI STYLES (SMOOTH ANIMATIONS)
-// ==========================================
 const SHARED_STYLES = `
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;background:linear-gradient(135deg,#1a1a2e 0%,#16213e 100%);display:flex;justify-content:center;align-items:center;min-height:100vh;padding:20px;color:#fff;overflow-x:hidden;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
@@ -613,49 +733,18 @@ h2{font-size:22px;font-weight:700;margin-bottom:10px;color:#fff;transition:color
 @media(max-width:400px){.container{padding:28px 20px}h2{font-size:20px}.icon-container{width:90px;height:130px}.shield-wrapper{width:70px;height:70px}.loader{width:35px;height:35px}.click-verify-btn{padding:12px 28px;font-size:15px}}
 `;
 
-// ==========================================
-// 🔒 ENHANCED ANTI-BYPASS JAVASCRIPT (MADE PERMISSIVE)
-// ==========================================
 const ANTI_BYPASS_JS = `
 (function(){
 'use strict';
 
-// 🔍 Headless Browser Detection (Disabled for now - blocks too many legitimate users)
-// Real users are being blocked by these checks
-// Only use server-side detection
-console.log('[Security] Client-side detection disabled to avoid false positives');
-console.log('[Security] Server-side detection is active');
+console.log('[Security] Client-side protection mode: Active');
 
-// REMOVED: Headless browser detection
-// REMOVED: Automation tool checks
-// REMOVED: DevTools detection
-// REMOVED: Debugger trap
-// REMOVED: All blocking mechanisms
-
-// Only keep minimal logging if needed
-console.log('[Security] Environment check passed');
-
-// Detect DevTools opening
-let devtoolsOpen = false;
-setInterval(() => {
-    const threshold = 160;
-    if (window.outerWidth - window.innerWidth > threshold || 
-        window.outerHeight - window.innerHeight > threshold) {
-        if (!devtoolsOpen) {
-            devtoolsOpen = true;
-            window.location.href = '/blocked';
-        }
-    }
-}, 500);
-
-// Block right-click
 document.addEventListener('contextmenu', (e) => { 
     e.preventDefault(); 
     e.stopPropagation();
     return false;
 }, true);
 
-// Block keyboard shortcuts for DevTools
 document.addEventListener('keydown', (e) => {
     if (e.ctrlKey && (e.key === 'u' || e.key === 's' || e.key === 'i' || e.key === 'j' || e.key === 'c' || e.key === 'shift' || e.key === 'k')) {
         e.preventDefault();
@@ -674,33 +763,16 @@ document.addEventListener('keydown', (e) => {
     }
 }, true);
 
-// Detect drag events that might indicate inspection
 document.addEventListener('dragstart', (e) => {
     e.preventDefault();
 });
 
-// Disable text selection
 document.addEventListener('selectstart', (e) => {
     if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
         e.preventDefault();
     }
 });
 
-// Debugger trap
-setInterval(() => {
-    const start = Date.now();
-    debugger;
-    if (Date.now() - start > 100) {
-        window.location.href = '/blocked';
-    }
-});
-
-// Clear console periodically to hide redirects
-setInterval(() => {
-    console.clear();
-}, 2000);
-
-// Block copy-paste
 document.addEventListener('copy', (e) => {
     e.preventDefault();
 });
@@ -708,142 +780,67 @@ document.addEventListener('paste', (e) => {
     e.preventDefault();
 });
 
-// Disable inspect element
-Object.defineProperty(document, 'querySelector', {
-    value: function() {
-        throw new Error('Inspection not allowed');
-    }
-})();
+var humanVerified = false;
+var mouseMovements = 0;
+var mouseDistances = [];
+var lastMousePos = { x: 0, y: 0 };
+var startTime = Date.now();
+var clickTimestamps = [];
 
-// 👆 Human Behavior Detection (FREE!)
-let humanVerified = false;
-let mouseMovements = 0;
-let mouseDistances = [];
-let lastMousePos = { x: 0, y: 0 };
-let startTime = Date.now();
-let clickTimestamps = [];
-let scrollEvents = [];
-let focusBlurEvents = [];
-let touchEvents = [];
-
-// Track detailed mouse movements
 document.addEventListener('mousemove', (e) => {
     mouseMovements++;
     
-    // Calculate distance moved
     if (lastMousePos.x !== 0 || lastMousePos.y !== 0) {
-        const dx = e.clientX - lastMousePos.x;
-        const dy = e.clientY - lastMousePos.y;
-        const distance = Math.sqrt(dx * dx + dy * dy);
+        var dx = e.clientX - lastMousePos.x;
+        var dy = e.clientY - lastMousePos.y;
+        var distance = Math.sqrt(dx * dx + dy * dy);
         mouseDistances.push(distance);
         if (mouseDistances.length > 50) mouseDistances.shift();
     }
     lastMousePos = { x: e.clientX, y: e.clientY };
 }, { passive: true });
 
-// Track clicks
 document.addEventListener('click', (e) => {
     clickTimestamps.push(Date.now());
     if (clickTimestamps.length > 10) clickTimestamps.shift();
 });
 
-// Track scroll events (FREE detection)
-document.addEventListener('scroll', (e) => {
-    scrollEvents.push({
-        time: Date.now(),
-        scrollY: window.scrollY
-    });
-    if (scrollEvents.length > 20) scrollEvents.shift();
-}, { passive: true });
-
-// Track focus/blur events (tab switching detection)
-window.addEventListener('focus', () => {
-    focusBlurEvents.push({ type: 'focus', time: Date.now() });
-});
-window.addEventListener('blur', () => {
-    focusBlurEvents.push({ type: 'blur', time: Date.now() });
-});
-
-// Track touch events for mobile
-document.addEventListener('touchstart', (e) => {
-    touchEvents.push({
-        time: Date.now(),
-        touches: e.touches.length,
-        x: e.touches[0]?.clientX || 0,
-        y: e.touches[0]?.clientY || 0
-    });
-    if (touchEvents.length > 10) touchEvents.shift();
-}, { passive: true });
-
-// Function to verify human behavior pattern
 window.verifyHuman = function() {
-    const timeElapsed = Date.now() - startTime;
-    const avgDistance = mouseDistances.length > 0 
-        ? mouseDistances.reduce((a, b) => a + b, 0) / mouseDistances.length 
+    var timeElapsed = Date.now() - startTime;
+    var avgDistance = mouseDistances.length > 0 
+        ? mouseDistances.reduce(function(a, b) { return a + b; }, 0) / mouseDistances.length 
         : 0;
     
-    // Check for suspicious patterns
-    let suspiciousScore = 0;
+    var suspiciousScore = 0;
     
-    // TOO fast - automation
     if (timeElapsed < 1000) suspiciousScore += 30;
     if (mouseMovements < 5) suspiciousScore += 30;
     
-    // TOO consistent - automation
     if (mouseMovements > 100 && avgDistance < 50) suspiciousScore += 20;
     
-    // Perfect timing - automation
     if (clickTimestamps.length >= 2) {
-        const intervals = [];
-        for (let i = 1; i < clickTimestamps.length; i++) {
+        var intervals = [];
+        for (var i = 1; i < clickTimestamps.length; i++) {
             intervals.push(clickTimestamps[i] - clickTimestamps[i-1]);
         }
-        const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
-        const variance = intervals.reduce((sum, interval) => sum + Math.pow(interval - avgInterval, 2), 0) / intervals.length;
-        if (Math.sqrt(variance) < 50) suspiciousScore += 30; // Too consistent
-    }
-    
-    // Check mouse movement smoothness (automation is too smooth)
-    if (mouseDistances.length > 10) {
-        const variations = mouseDistances.slice(-10).map((d, i) => {
-            if (i === 0) return 0;
-            return Math.abs(d - mouseDistances[mouseDistances.length - 10 + i - 1]);
-        });
-        const avgVariation = variations.reduce((a, b) => a + b, 0) / variations.length;
-        if (avgVariation < 5 && mouseMovements > 50) suspiciousScore += 25;
-    }
-    
-    // Scroll detection (FREE!)
-    if (scrollEvents.length === 0 && timeElapsed > 2000) {
-        suspiciousScore += 15; // No scrolling after 2 seconds
-    }
-    
-    // Focus/blur detection (tab switching)
-    if (focusBlurEvents.length > 3) {
-        suspiciousScore += 20; // Too many focus/blur events
-    }
-    
-    // Touch detection (mobile vs desktop)
-    const isMobile = /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    if (isMobile && touchEvents.length === 0) {
-        suspiciousScore += 25; // Mobile device but no touch events
+        var avgInterval = intervals.reduce(function(a, b) { return a + b; }, 0) / intervals.length;
+        var variance = intervals.reduce(function(sum, interval) {
+            return sum + Math.pow(interval - avgInterval, 2);
+        }, 0) / intervals.length;
+        if (Math.sqrt(variance) < 50) suspiciousScore += 30;
     }
     
     humanVerified = suspiciousScore < 30;
     return humanVerified;
 };
 
-// Mark verified after mouse movement sufficient
-setTimeout(() => {
+setTimeout(function() {
     humanVerified = window.verifyHuman();
 }, 3000);
 })();
 `;
 
-// ==========================================
-// 1. GO PATH (ENHANCED UI) - WITH HEADLESS DETECTION
-// ==========================================
-app.get('/go/:sessionId', detectHeadlessBrowser, trackIPBehavior, rateLimiter, async (req, res) => {
+app.get('/go/:sessionId', detectHeadlessBrowser, detectBrowserExtension, trackIPBehavior, turnstileMiddleware, rateLimiter, async (req, res) => {
     const sessionId = req.params.sessionId;
     console.log(`[/go] Request: ${sessionId}`);
 
@@ -851,9 +848,17 @@ app.get('/go/:sessionId', detectHeadlessBrowser, trackIPBehavior, rateLimiter, a
         return res.status(400).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Invalid</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>❌ Invalid Link</h1></div></body></html>');
     }
 
+    if (isSessionLocked(sessionId)) {
+        console.log(`[/go] Session locked: ${sessionId}`);
+        return res.status(429).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Busy</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>⏳ Please wait</h1></div></body></html>');
+    }
+
     try {
+        lockSession(sessionId);
+        
         const result = await findSession(sessionId);
         if (!result) {
+            sessionLocks.delete(sessionId);
             console.log(`[/go] Session NOT FOUND: ${sessionId}`);
             return res.status(404).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Not Found</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🔍 Link Not Found</h1></div></body></html>');
         }
@@ -862,15 +867,19 @@ app.get('/go/:sessionId', detectHeadlessBrowser, trackIPBehavior, rateLimiter, a
         const ageSeconds = Math.floor((Date.now() - new Date(sessionData.created_at).getTime()) / 1000);
 
         if (ageSeconds > 900) {
+            sessionLocks.delete(sessionId);
             return res.status(410).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Expired</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>⏰ Link Expired</h1></div></body></html>');
         }
         if (sessionData.used) {
+            sessionLocks.delete(sessionId);
             return res.status(410).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Used</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>✅ Already Used</h1></div></body></html>');
         }
         if (sessionData.access_count >= 3) {
+            sessionLocks.delete(sessionId);
             return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Blocked</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🚫 Too Many Attempts</h1></div></body></html>');
         }
         if (!sessionData.short_url || !isValidUrl(sessionData.short_url)) {
+            sessionLocks.delete(sessionId);
             return res.status(400).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Invalid</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>⚠️ Invalid Destination</h1></div></body></html>');
         }
 
@@ -885,6 +894,11 @@ app.get('/go/:sessionId', detectHeadlessBrowser, trackIPBehavior, rateLimiter, a
         const host = req.get('host');
         const redirectToken = generateRedirectToken(sessionId);
         const linkUrl = `https://${host}/link/${redirectToken}`;
+        
+        const jwtToken = createJWT({ 
+            sessionId, 
+            exp: Math.floor(Date.now() / 1000) + 900 
+        });
 
         const turnstileSiteKey = process.env.TURNSTILE_SITE_KEY || '0x4AAAAAAAxxxxxxxxxxxx';
         
@@ -922,25 +936,27 @@ app.get('/go/:sessionId', detectHeadlessBrowser, trackIPBehavior, rateLimiter, a
 <script>
 (function(){
 'use strict';
-let clickVerified = false;
-const linkUrl = '${linkUrl}';
-const btn = document.getElementById('clickVerifyBtn');
-const progressBar = document.getElementById('progressBar');
-const progress = document.getElementById('progress');
-const statusMessage = document.getElementById('statusMessage');
-const countdownBox = document.getElementById('countdownBox');
-const countdownEl = document.getElementById('countdown');
-const shieldWrapper = document.getElementById('shieldWrapper');
-const loaderWrapper = document.getElementById('loaderWrapper');
-const checkMark = document.getElementById('checkMark');
-const title = document.getElementById('title');
-const message = document.getElementById('message');
+var clickVerified = false;
+var linkUrl = '${linkUrl}';
+var jwtToken = '${jwtToken}';
+var btn = document.getElementById('clickVerifyBtn');
+var progressBar = document.getElementById('progressBar');
+var progress = document.getElementById('progress');
+var statusMessage = document.getElementById('statusMessage');
+var countdownBox = document.getElementById('countdownBox');
+var countdownEl = document.getElementById('countdown');
+var shieldWrapper = document.getElementById('shieldWrapper');
+var loaderWrapper = document.getElementById('loaderWrapper');
+var checkMark = document.getElementById('checkMark');
+var title = document.getElementById('title');
+var message = document.getElementById('message');
 
-function fadeText(element, text, delay = 0) {
+function fadeText(element, text, delay) {
+    delay = delay || 0;
     if (!element) return;
-    setTimeout(() => {
+    setTimeout(function() {
         element.style.opacity = '0.6';
-        setTimeout(() => {
+        setTimeout(function() {
             element.textContent = text;
             element.style.opacity = '1';
         }, 150);
@@ -950,57 +966,16 @@ function fadeText(element, text, delay = 0) {
 function startVerification() {
     if (clickVerified) return;
     
-    // 🔒 Human behavior verification - DISABLED to avoid blocking legitimate users
-    // Many legitimate users were being blocked by this
-    if (typeof window.verifyHuman === 'function') {
-        console.log('[Security] Human verification check skipped - allowing all users');
-    }
-    
-    // 🔐 Cloudflare Turnstile Verification (FREE!)
     btn.disabled = true;
     btn.textContent = '🔒 Verifying...';
     fadeText(statusMessage, 'Running security check...', 0);
     
-    if (typeof turnstile !== 'undefined') {
-        turnstile.ready(function() {
-            turnstile.execute('${turnstileSiteKey}', {
-                action: 'submit'
-            })
-            .then(function(token) {
-                fetch('/api/verify-turnstile', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ token: token })
-                })
-                .then(res => res.json())
-                .then(data => {
-                    if (data.success) {
-                        btn.textContent = '✓ Verified!';
-                        proceedAfterVerification();
-                    } else {
-                        btn.disabled = false;
-                        btn.textContent = '⚠️ Verification Failed';
-                        btn.style.background = 'linear-gradient(135deg, #e74c3c, #c0392b)';
-                        fadeText(statusMessage, data.message || 'Security check failed', 0);
-                    }
-                })
-                .catch(err => {
-                    console.error('[Turnstile] Error:', err);
-                    // Fail open - allow if Turnstile fails
-                    proceedAfterVerification();
-                });
-            })
-            .catch(err => {
-                console.error('[Turnstile] Execute error:', err);
-                // Fail open - allow if Turnstile fails
-                proceedAfterVerification();
-            });
-        });
-    } else {
-        // Turnstile not loaded - proceed anyway (fail open)
-        console.warn('[Turnstile] Not loaded, proceeding anyway');
-        proceedAfterVerification();
+    if (typeof window.verifyHuman === 'function') {
+        window.verifyHuman();
     }
+    
+    btn.textContent = '✓ Verified!';
+    proceedAfterVerification();
 }
 
 function proceedAfterVerification() {
@@ -1015,7 +990,7 @@ function proceedAfterVerification() {
     if (loaderWrapper) loaderWrapper.style.display = 'none';
     if (checkMark) {
         checkMark.classList.add('show');
-        setTimeout(() => { checkMark.style.opacity = '1'; }, 50);
+        setTimeout(function() { checkMark.style.opacity = '1'; }, 50);
     }
 
     progressBar.style.display = 'block';
@@ -1034,9 +1009,9 @@ function proceedAfterVerification() {
 
     if (countdownBox) {
         countdownBox.style.display = 'block';
-        let timeLeft = 3;
+        var timeLeft = 3;
         countdownEl.textContent = timeLeft;
-        const timer = setInterval(() => {
+        var timer = setInterval(function() {
             timeLeft--;
             countdownEl.textContent = timeLeft;
             if (timeLeft <= 0) {
@@ -1046,15 +1021,14 @@ function proceedAfterVerification() {
         }, 1000);
     }
 
-    // 🔒 Random delay to confuse automation timing analysis
-    const randomDelay = Math.floor(Math.random() * 1500) + 2000; // 2-3.5 seconds
+    var randomDelay = Math.floor(Math.random() * 1500) + 2000;
     
-    setTimeout(() => {
-        const ua = navigator.userAgent || '';
-        const isAndroid = /Android/i.test(ua);
+    setTimeout(function() {
+        var ua = navigator.userAgent || '';
+        var isAndroid = /Android/i.test(ua);
         if (isAndroid) {
             try {
-                const intentUrl = 'intent://' + linkUrl.replace(/^https?:\\/\\//,'') + '#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=' + encodeURIComponent(linkUrl) + ';end';
+                var intentUrl = 'intent://' + linkUrl.replace(/^https?:\\/\\//,'') + '#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=' + encodeURIComponent(linkUrl) + ';end';
                 window.location.href = intentUrl;
             } catch(e) {
                 window.location.href = linkUrl;
@@ -1074,23 +1048,21 @@ if (btn) {
 </html>`);
 
     } catch (error) {
+        sessionLocks.delete(sessionId);
         console.error('[/go] Error:', error.message);
         return res.status(500).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Error</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>⚠️ Server Error</h1></div></body></html>');
     }
 });
 
-// ==========================================
-// 2. LINK PATH (ENHANCED UI) - WITH HEADLESS DETECTION
-// ==========================================
-app.get('/link/:token', detectHeadlessBrowser, trackIPBehavior, rateLimiter, async (req, res) => {
+app.get('/link/:token', detectHeadlessBrowser, detectBrowserExtension, trackIPBehavior, turnstileMiddleware, requireJWT, rateLimiter, async (req, res) => {
     const token = req.params.token;
     const requestStartTime = Date.now();
-    const referrer = req.get('referrer') || '';
+    const referrer = req.get('referrer') || req.get('referer') || '';
     const host = req.get('host');
+    const jwt = req.user;
     
     console.log(`[/link] Request: ${token.substring(0, 10)}... | Referrer: ${referrer}`);
 
-    // 🔒 Validate redirect token
     const tokenData = validateRedirectToken(token);
     if (!tokenData) {
         console.log(`[/link] BLOCKED: Invalid token - ${token.substring(0, 10)}...`);
@@ -1099,31 +1071,32 @@ app.get('/link/:token', detectHeadlessBrowser, trackIPBehavior, rateLimiter, asy
     
     const sessionId = tokenData.sessionId;
     
-    // 🔒 Referrer validation - MADE LESS STRICT for legitimate users
-    // Many browsers block or strip referrers, so we only block obviously suspicious cases
+    if (jwt.sessionId !== sessionId) {
+        console.log(`[/link] BLOCKED: JWT mismatch`);
+        return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Access Denied</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🚫 Session Mismatch</h1><p>Please start over from the verification page</p></div></body></html>');
+    }
     
-    // Allow if no referrer (privacy settings)
+    let referrerValid = false;
     if (!referrer || referrer === '') {
-        console.log(`[/link] Access granted (no referrer)`);
-    } 
-    // Allow if same origin
-    else if (referrer.includes(host)) {
+        console.log(`[/link] BLOCKED: No referrer`);
+        return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Access Denied</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🚫 Referrer Required</h1><p>Please start over from the verification page</p></div></body></html>');
+    } else if (referrer.includes(host)) {
         console.log(`[/link] Access granted (same origin)`);
-    }
-    // Allow if came from /go/
-    else if (referrer.includes('/go/')) {
+        referrerValid = true;
+    } else if (referrer.includes('/go/')) {
         console.log(`[/link] Access granted (from /go/)`);
-    }
-    // Allow if came from /access/ with sessionId (exact match not required anymore)
-    else if (referrer.includes('/access/')) {
+        referrerValid = true;
+    } else if (referrer.includes('/access/')) {
         console.log(`[/link] Access granted (from /access/)`);
-    }
-    // Otherwise log but allow access
-    else {
-        console.log(`[/link] Access granted (referrer: ${referrer.substring(0, 50)}...)`);
+        referrerValid = true;
+    } else {
+        console.log(`[/link] BLOCKED: Invalid referrer - ${referrer.substring(0, 50)}...`);
+        return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Access Denied</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🚫 Invalid Referrer</h1><p>Please start over from the verification page</p></div></body></html>');
     }
     
-    // Don't block users based on referrer - it's unreliable
+    if (!referrerValid) {
+        return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Access Denied</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🚫 Access Denied</h1><p>Please start over from the verification page</p></div></body></html>');
+    }
 
     try {
         const result = await findSession(sessionId);
@@ -1137,7 +1110,7 @@ app.get('/link/:token', detectHeadlessBrowser, trackIPBehavior, rateLimiter, asy
             return res.status(410).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Expired</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>⏰ Link Expired</h1></div></body></html>');
         }
         if (sessionData.used) {
-            return res.status(410).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Used</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>✅ Already Used</h1></div></body></html>');
+            return res.status(410).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Used</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font_family:sans-serif;text-align:center;padding:20px;"><div><h1>✅ Already Used</h1></div></body></html>');
         }
         if (!sessionData.short_url || !isValidUrl(sessionData.short_url)) {
             return res.status(400).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Invalid</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>⚠️ Invalid Destination</h1></div></body></html>');
@@ -1170,21 +1143,22 @@ app.get('/link/:token', detectHeadlessBrowser, trackIPBehavior, rateLimiter, asy
 <p class="message">Loading your destination...</p>
 <div class="progress-bar"><div class="progress" id="progress"></div></div>
 <p class="status-message" id="statusMessage">Preparing redirect...</p>
-<div class="security-badge"><svg class="lock-icon" viewBox="0 0 24 24"><path d="M12 2C9.243 2 7 4.243 7 7V10H6C4.897 10 4 10.897 4 12V20C4 21.103 4.897 22 6 22H18C19.103 22 20 21.103 20 20V12C20 10.897 19.103 10 18 10H17V7C17 4.243 14.757 2 12 2ZM12 4C13.654 4 15 5.346 15 7V10H9V7C9 5.346 10.346 4 12 4ZM12 14C13.103 14 14 14.897 14 16C14 17.103 13.103 18 12 18C10.897 18 10 17.103 10 16C10 14.897 10.897 14 12 14Z"/></svg><span>256-bit SSL Encrypted</span></div>
+<div class="security-badge"><svg class="lock-icon" viewBox="0 0 24 24"><path d="M12 2C9.243 2 7 4.243 7 7V10H6 C4.897 10 4 10.897 4 12V20C4 21.103 4.897 22 6 22H18C19.103 22 20 21.103 20 20V12C20 10.897 19.103 10 18 10H17V7C17 4.243 14.757 2 12 2ZM12 4C13.654 4 15 5.346 15 7V10H9V7C9 5.346 10.346 4 12 4ZM12 14C13.103 14 14 14.897 14 16C14 17.103 13.103 18 12 18C10.897 18 10 17.103 10 16C10 14.897 10.897 14 12 14Z"/></svg><span>256-bit SSL Encrypted</span></div>
 </div>
 </div>
 <script>${ANTI_BYPASS_JS}</script>
 <script>
 (function(){
-const encryptedDest = '${encryptedDest}';
-const progress = document.getElementById('progress');
-const statusMessage = document.getElementById('statusMessage');
+var encryptedDest = '${encryptedDest}';
+var progress = document.getElementById('progress');
+var statusMessage = document.getElementById('statusMessage');
 
-function fadeText(element, text, delay = 0) {
+function fadeText(element, text, delay) {
+    delay = delay || 0;
     if (!element) return;
-    setTimeout(() => {
+    setTimeout(function() {
         element.style.opacity = '0.6';
-        setTimeout(() => {
+        setTimeout(function() {
             element.textContent = text;
             element.style.opacity = '1';
         }, 150);
@@ -1202,42 +1176,36 @@ if (progress) {
 
 fadeText(statusMessage, 'Decrypting secure link...', 0);
 
-// 🔒 Hide token from browser history immediately
 try {
     history.replaceState(null, '', '/secure-redirect');
 } catch(e) {}
 
-setTimeout(() => {
+setTimeout(function() {
     fetch('/api/decrypt-url', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ encrypted: encryptedDest })
     })
-    .then(res => res.json())
-    .then(data => {
+    .then(function(res) { return res.json(); })
+    .then(function(data) {
         if (data.success && data.url) {
             fadeText(statusMessage, 'Opening destination...', 400);
             
-            // 🔒 Random delay to confuse timing analysis
-            const randomDelay = Math.floor(Math.random() * 1000) + 400; // 400-1400ms
+            var randomDelay = Math.floor(Math.random() * 1000) + 400;
             
-            // 🔒 Additional obfuscation layers
-            setTimeout(() => {
-                const u = data.url;
+            setTimeout(function() {
+                var u = data.url;
                 if (typeof u === 'string' && u.length > 0) {
                     try {
-                        // Method 1: eval obfuscation
-                        const f = 'window.location.assign';
-                        eval(\`\${f}('\${u}')\`);
+                        var f = 'window.location.assign';
+                        eval(f + '("' + u + '")');
                     } catch(e1) {
                         try {
-                            // Method 2: Blob redirect
-                            const blob = new Blob([\`<script>window.location.href='\${u}';<\\/script>\`], { type: 'text/html' });
-                            const blobUrl = URL.createObjectURL(blob);
+                            var blob = new Blob(['<script>window.location.href="' + u + '";<\/script>'], { type: 'text/html' });
+                            var blobUrl = URL.createObjectURL(blob);
                             window.location.href = blobUrl;
-                            setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+                            setTimeout(function() { URL.revokeObjectURL(blobUrl); }, 1000);
                         } catch(e2) {
-                            // Method 3: Fallback
                             window.location.href = u;
                         }
                     }
@@ -1247,7 +1215,7 @@ setTimeout(() => {
             fadeText(statusMessage, 'Link expired', 0);
         }
     })
-    .catch(() => {
+    .catch(function() {
         fadeText(statusMessage, 'Security check failed', 0);
     });
 }, 800);
@@ -1262,197 +1230,48 @@ setTimeout(() => {
     }
 });
 
-// ==========================================
-// 3. Session Validation API
-// ==========================================
-app.get('/api/process-session/:sessionId', rateLimiter, async (req, res) => {
-    const sessionId = req.params.sessionId;
-    if (!isValidSessionId(sessionId)) return res.json({ success: false, message: 'Invalid session ID.' });
-    try {
-        const result = await findSession(sessionId);
-        if (!result) return res.json({ success: false, message: 'Session not found.' });
-        const sessionData = result.sessionData;
-        const ageSeconds = Math.floor((Date.now() - new Date(sessionData.created_at).getTime()) / 1000);
-        if (ageSeconds > 900) return res.json({ success: false, message: 'Link expired.' });
-        if (sessionData.used) return res.json({ success: false, message: 'Link already used.' });
-        if (!sessionData.short_url) return res.json({ success: false, message: 'Session incomplete.' });
-        return res.json({ success: true, redirect_path: `/go/${sessionId}` });
-    } catch (error) {
-        console.error('[API] Error:', error.message);
-        return res.json({ success: false, message: 'Server error.' });
+app.get('/api/get-jwt', turnstileMiddleware, rateLimiter, async (req, res) => {
+    const { session_id } = req.query;
+    if (!session_id || !isValidSessionId(session_id)) {
+        return res.status(400).json({ success: false, message: 'Invalid session ID' });
     }
+    
+    const jwtToken = createJWT({ 
+        sessionId: session_id, 
+        exp: Math.floor(Date.now() / 1000) + 900 
+    });
+    
+    res.json({ 
+        success: true, 
+        token: jwtToken 
+    });
 });
 
-// ==========================================
-// Click Verification Endpoint
-// ==========================================
-app.post('/api/verify-click', rateLimiter, async (req, res) => {
-    const { session_id, click_time } = req.body;
-    if (!session_id || !click_time) return res.json({ success: false, message: 'Missing fields' });
+app.post('/api/store-session', signedRequest, rateLimiter, async (req, res) => {
+    const clientKey = req.headers['x-api-key'];
+    if (API_SECRET_KEY !== clientKey) {
+        return res.status(403).json({ success: false, message: 'Access Denied' });
+    }
+    
+    const { session_id, short_url, user_id, main_id, bot_username } = req.body;
+    if (!session_id || !short_url) {
+        return res.status(400).json({ success: false, message: 'Missing fields' });
+    }
+    if (!isValidSessionId(session_id)) {
+        return res.status(400).json({ success: false, message: 'Invalid session ID' });
+    }
+    if (!isValidUrl(short_url)) {
+        return res.status(400).json({ success: false, message: 'Invalid URL' });
+    }
     try {
         const shardIndex = getShardIndex(session_id);
         const collection = await getDatabase(shardIndex);
-        await collection.updateOne(
-            { session_id: session_id },
-            { $set: { click_verified: true, click_time: parseInt(click_time) } },
-            { upsert: false }
-        );
-        return res.json({ success: true });
-    } catch (error) {
-        console.error('[Verify-Click] Error:', error.message);
-        return res.json({ success: false, message: 'Verification failed' });
-    }
-});
-
-// ==========================================
-// URL Decryption Endpoint
-// ==========================================
-app.post('/api/decrypt-url', rateLimiter, async (req, res) => {
-    const { encrypted } = req.body;
-    if (!encrypted) return res.json({ success: false, message: 'Invalid request' });
-    
-    try {
-        const decryptedUrl = decryptUrl(encrypted);
-        if (!decryptedUrl || !isValidUrl(decryptedUrl)) {
-            return res.json({ success: false, message: 'Invalid URL' });
+        
+        const existingSession = await collection.findOne({ session_id: session_id });
+        if (existingSession && existingSession.used) {
+            return res.json({ success: false, message: 'Session already used' });
         }
         
-        const ip = req.headers['x-forwarded-for']?.split(',')[0] || req.ip;
-        console.log(`[Decrypt] IP: ${ip}`);
-        
-        return res.json({ success: true, url: decryptedUrl });
-    } catch (error) {
-        console.error('[Decrypt] Error:', error.message);
-        return res.json({ success: false, message: 'Decryption failed' });
-    }
-});
-
-// ==========================================
-// 🧩 Challenge Verification Endpoints
-// ==========================================
-app.get('/api/get-challenge', rateLimiter, (req, res) => {
-    const challenge = generateChallenge();
-    res.json({
-        success: true,
-        challenge_id: challenge.id,
-        num1: challenge.num1,
-        num2: challenge.num2,
-        operation: challenge.operation
-    });
-});
-
-app.post('/api/verify-challenge', rateLimiter, async (req, res) => {
-    const { challenge_id, answer } = req.body;
-    if (!challenge_id || !answer) {
-        return res.json({ success: false, message: 'Missing fields' });
-    }
-    
-    const isValid = verifyChallenge(challenge_id, answer);
-    
-    if (!isValid) {
-        console.log(`[Challenge] FAILED: ${challenge_id} - ${answer}`);
-        // Track failed attempts
-        const ip = req.headers['x-forwarded-for']?.split(',')[0] || req.ip;
-        return res.json({ success: false, message: 'Incorrect answer' });
-    }
-    
-    console.log(`[Challenge] PASSED: ${challenge_id}`);
-    res.json({ success: true, message: 'Challenge verified' });
-});
-
-// ==========================================
-// 🔐 CAPTCHA Verification Endpoint (reCAPTCHA v3)
-// ==========================================
-app.post('/api/verify-captcha', rateLimiter, async (req, res) => {
-    const { token } = req.body;
-    const ip = req.headers['x-forwarded-for']?.split(',')[0] || req.ip;
-    
-    if (!token) {
-        return res.json({ success: false, message: 'Missing CAPTCHA token' });
-    }
-    
-    // Verify with Google
-    const result = await verifyCaptcha(token, ip);
-    
-    if (!result.success) {
-        console.log(`[CAPTCHA] Verification failed: ${JSON.stringify(result)}`);
-        return res.json({ 
-            success: false, 
-            message: 'CAPTCHA verification failed',
-            score: 0
-        });
-    }
-    
-    // Score: 0.0 = bot, 1.0 = human
-    // Threshold: 0.5 or higher = acceptable
-    const score = result.score || 0;
-    const threshold = 0.5;
-    
-    if (score < threshold) {
-        console.log(`[CAPTCHA] Score too low: ${score} (threshold: ${threshold})`);
-        return res.json({ 
-            success: false, 
-            message: 'Suspicious activity detected',
-            score: score
-        });
-    }
-    
-    console.log(`[CAPTCHA] Verified successfully: ${score}`);
-    res.json({ 
-        success: true, 
-        message: 'CAPTCHA verified',
-        score: score
-    });
-});
-
-// ==========================================
-// ❌ FREE: Cloudflare Turnstile Verification Endpoint
-// ==========================================
-app.post('/api/verify-turnstile', rateLimiter, async (req, res) => {
-    const { token } = req.body;
-    const ip = req.headers['x-forwarded-for']?.split(',')[0] || req.ip;
-    
-    if (!token) {
-        return res.json({ success: false, message: 'Missing Turnstile token' });
-    }
-    
-    // Verify with Cloudflare (FREE!)
-    const result = await verifyTurnstile(token, ip);
-    
-    if (!result.success) {
-        console.log(`[Turnstile] Verification failed: ${JSON.stringify(result)}`);
-        return res.json({ 
-            success: false, 
-            message: 'Security verification failed'
-        });
-    }
-    
-    console.log(`[Turnstile] Verified successfully`);
-    res.json({ 
-        success: true, 
-        message: 'Security verified'
-    });
-});
-
-// ==========================================
-// 🛡️ PROTECTED ENDPOINTS
-// ==========================================
-app.use(botGuard);
-
-app.get('/blocked', (req, res) => {
-    res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Blocked</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🚫 Access Blocked</h1></div></body></html>');
-});
-
-app.post('/api/store-session', async (req, res) => {
-    const clientKey = req.headers['x-api-key'];
-    if (API_SECRET_KEY !== clientKey) return res.status(403).json({ success: false, message: 'Access Denied' });
-    const { session_id, short_url, user_id, main_id, bot_username } = req.body;
-    if (!session_id || !short_url) return res.status(400).json({ success: false, message: 'Missing fields' });
-    if (!isValidSessionId(session_id)) return res.status(400).json({ success: false, message: 'Invalid session ID' });
-    if (!isValidUrl(short_url)) return res.status(400).json({ success: false, message: 'Invalid URL' });
-    try {
-        const shardIndex = getShardIndex(session_id);
-        const collection = await getDatabase(shardIndex);
         await collection.updateOne(
             { session_id: session_id },
             {
@@ -1475,9 +1294,34 @@ app.post('/api/store-session', async (req, res) => {
     }
 });
 
-// ==========================================
-// 404 & Error Handlers
-// ==========================================
+app.post('/api/decrypt-url', requireJWT, turnstileMiddleware, rateLimiter, async (req, res) => {
+    const { encrypted } = req.body;
+    if (!encrypted) {
+        return res.json({ success: false, message: 'Invalid request' });
+    }
+    
+    try {
+        const decryptedUrl = decryptUrl(encrypted);
+        if (!decryptedUrl || !isValidUrl(decryptedUrl)) {
+            return res.json({ success: false, message: 'Invalid URL' });
+        }
+        
+        const ip = req.headers['x-forwarded-for']?.split(',')[0] || req.ip;
+        console.log(`[Decrypt] IP: ${ip}`);
+        
+        return res.json({ success: true, url: decryptedUrl });
+    } catch (error) {
+        console.error('[Decrypt] Error:', error.message);
+        return res.json({ success: false, message: 'Decryption failed' });
+    }
+});
+
+app.use(botGuard);
+
+app.get('/blocked', (req, res) => {
+    res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Blocked</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🚫 Access Blocked</h1></div></body></html>');
+});
+
 app.use((req, res) => res.status(404).sendFile(path.join(__dirname, 'public', 'index.html')));
 app.use((err, req, res, next) => {
     console.error('Unhandled error:', err.message);
@@ -1487,26 +1331,17 @@ app.use((err, req, res, next) => {
     res.status(500).json({ success: false, message: 'Internal server error' });
 });
 
-// ==========================================
-// 🚨 Global Error Handlers (Prevent Crashes)
-// ==========================================
-
-// Handle uncaught exceptions
 process.on('uncaughtException', (err) => {
     console.error('❌ Uncaught Exception:', err.message);
     if (process.env.NODE_ENV === 'development') {
         console.error('Stack:', err.stack);
     }
-    // Don't exit - let Vercel handle it gracefully
 });
 
-// Handle unhandled promise rejections
 process.on('unhandledRejection', (reason, promise) => {
     console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
-    // Don't exit - let Vercel handle it gracefully
 });
 
-// Graceful shutdown for development, skip on Vercel
 if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
     process.on('SIGTERM', async () => {
         console.log('🔄 SIGTERM received, closing MongoDB connections...');
@@ -1544,7 +1379,6 @@ if (require.main === module) {
 
 module.exports = app;
 
-// Vercel serverless function handler
 if (process.env.VERCEL) {
     module.exports = (req, res) => {
         app(req, res);
