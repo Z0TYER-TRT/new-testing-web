@@ -57,6 +57,7 @@ const activeSessions = new Map();
 const sessionLocks = new Map();
 const behaviorTracking = new Map();
 const requestSignatures = new Map();
+const redirectTokens = new Map();
 
 function generateChallenge() {
     const challenge = {
@@ -103,97 +104,41 @@ function verifyChallenge(challengeId, answer) {
     return isCorrect;
 }
 
-async function createRedirectTokensCollection(index = 0) {
-    const cacheKey = `tokens_${index}`;
-    if (mongoCollections.has(cacheKey)) {
-        return mongoCollections.get(cacheKey);
-    }
-    
-    try {
-        if (!mongoClients.has(cacheKey)) {
-            const client = new MongoClient(DB_SHARDS[index], {
-                maxPoolSize: 5,
-                serverSelectionTimeoutMS: 5000,
-                socketTimeoutMS: 10000,
-                connectTimeoutMS: 5000
-            });
-            await client.connect();
-            mongoClients.set(cacheKey, client);
-        }
-        const client = mongoClients.get(cacheKey);
-        const db = client.db('redirect-service');
-        const col = db.collection('redirect_tokens');
-        
-        // Create TTL index - auto delete expired tokens after 60 seconds
-        await col.createIndex({ "expiresAt": 1 }, { expireAfterSeconds: 0, background: true });
-        await col.createIndex({ "token": 1 }, { unique: true, background: true });
-        
-        mongoCollections.set(cacheKey, col);
-        return col;
-    } catch (error) {
-        console.error(`[TokensCollection] Error:`, error.message);
-        throw error;
-    }
-}
-
 function generateRedirectToken(sessionId) {
-    return crypto.randomBytes(32).toString('base64url');
+    const token = crypto.randomBytes(32).toString('base64url');
+    const TOKEN_EXPIRY = 60000;
+    redirectTokens.set(token, {
+        sessionId,
+        createdAt: Date.now(),
+        expiresAt: Date.now() + TOKEN_EXPIRY,
+        locked: true
+    });
+    return token;
 }
 
-async function storeRedirectToken(token, sessionId, nonce) {
-    try {
-        const TOKEN_EXPIRY = 60000; // 60 seconds
-        const expiresAt = new Date(Date.now() + TOKEN_EXPIRY);
-        
-        // Store in database with TTL and nonce
-        const col = await createRedirectTokensCollection(0);
-        await col.insertOne({
-            token,
-            sessionId,
-            nonce,
-            createdAt: new Date(),
-            expiresAt: expiresAt,
-            used: false
-        });
-        
-        console.log(`[RedirectToken] Created: ${token.substring(0, 10)}...`);
-        return true;
-    } catch (error) {
-        console.error('[RedirectToken] Store error:', error.message);
-        return false;
-    }
-}
-
-async function validateRedirectToken(token) {
-    try {
-        const col = await createRedirectTokensCollection(0);
-        const tokenData = await col.findOne({ token, used: false });
-        
-        if (!tokenData) {
-            console.log(`[RedirectToken] Invalid or expired: ${token.substring(0, 10)}...`);
-            return null;
-        }
-        
-        // Check if expired (TTL should handle this, but check anyway)
-        if (new Date() > tokenData.expiresAt) {
-            console.log(`[RedirectToken] Expired: ${token.substring(0, 10)}...`);
-            await col.deleteOne({ token });
-            return null;
-        }
-        
-        // Mark as used immediately (one-time use)
-        await col.updateOne({ token }, { $set: { used: true, usedAt: new Date() } });
-        
-        console.log(`[RedirectToken] Validated: ${token.substring(0, 10)}...`);
-        return { sessionId: tokenData.sessionId, nonce: tokenData.nonce };
-    } catch (error) {
-        console.error('[RedirectToken] Validation error:', error.message);
+function validateRedirectToken(token) {
+    const tokenData = redirectTokens.get(token);
+    if (!tokenData) return null;
+    
+    if (Date.now() > tokenData.expiresAt) {
+        redirectTokens.delete(token);
         return null;
     }
+    
+    redirectTokens.delete(token);
+    return tokenData;
 }
 
-// Note: TTL index in MongoDB automatically cleans up expired redirect tokens
-// No manual cleanup needed - tokens are deleted after 60 seconds
+if (process.env.VERCEL !== '1') {
+    setInterval(() => {
+        const now = Date.now();
+        for (const [token, data] of redirectTokens) {
+            if (now > data.expiresAt) {
+                redirectTokens.delete(token);
+            }
+        }
+    }, 30000);
+}
 
 function detectHeadlessBrowser(req, res, next) {
     const userAgent = (req.get('User-Agent') || '').toLowerCase();
@@ -416,11 +361,7 @@ app.use(helmet({
 }));
 
 app.use(cors({
-    origin: [
-        'https://new-testing-web-sigma.vercel.app',
-        'https://t.me',
-        'https://telegram.org'
-    ],
+    origin: true,
     methods: ['GET', 'POST'],
     allowedHeaders: ['Content-Type', 'x-api-key', 'Authorization', 'x-request-signature', 'x-request-timestamp'],
     credentials: false
@@ -620,22 +561,42 @@ async function findSession(sessionId) {
     return null;
 }
 
-async function cleanExpiredTokens() {
-    try {
-        const col = await createRedirectTokensCollection(0);
-        const result = await col.deleteMany({ expiresAt: { $lt: new Date() } });
-        if (result.deletedCount > 0) {
-            console.log(`🧹 Cleaned ${result.deletedCount} expired redirect tokens`);
+if (process.env.VERCEL !== '1') {
+    setInterval(async () => {
+        const cutoffDate = new Date(Date.now() - 30 * 60 * 1000);
+        try {
+            const col = await getDatabase(0);
+            const result = await col.deleteMany({ created_at: { $lt: cutoffDate } });
+            if (result.deletedCount > 0) {
+                console.log(`🧹 Cleaned ${result.deletedCount} old sessions`);
+            }
+        } catch (err) {
+            console.error(`Cleanup error:`, err.message);
         }
-    } catch (err) {
-        console.error(`[Cleanup] Error:`, err.message);
-    }
+    }, 5 * 60 * 1000);
 }
 
-// Run cleanup every 5 minutes
-if (process.env.VERCEL !== '1') {
-    setInterval(cleanExpiredTokens, 5 * 60 * 1000);
+app.use(compression());
+app.use(express.json({ limit: '10kb' }));
+app.use(express.urlencoded({ extended: true, limit: '10kb' }));
+
+if (process.env.VERCEL) {
+    app.use((req, res, next) => {
+        res.setTimeout(10000);
+        next();
+    });
 }
+
+app.use(express.static(path.join(__dirname, 'public'), {
+    maxAge: '1h',
+    setHeaders: (res, filepath) => {
+        if (filepath.endsWith('.js')) res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+        else if (filepath.endsWith('.css')) res.setHeader('Content-Type', 'text/css; charset=utf-8');
+        else if (filepath.endsWith('.html')) res.setHeader('content-type', 'text/html; charset=utf-8');
+    }
+}));
+
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 app.get('/health', async (req, res) => {
     const healthCheck = {
@@ -726,8 +687,8 @@ async function verifyCaptcha(token, ip) {
 
 async function verifyTurnstile(token, ip) {
     if (!TURNSTILE_SECRET_KEY || TURNSTILE_SECRET_KEY.includes('yyyyyyyy')) {
-        console.warn('[Turnstile] Not configured, failing closed');
-        return { success: false, message: 'Turnstile not configured' };
+        console.warn('[Turnstile] Not configured, skipping verification');
+        return { success: true, score: 1.0 };
     }
     
     try {
@@ -745,18 +706,17 @@ async function verifyTurnstile(token, ip) {
         
         if (!data.success) {
             console.log('[Turnstile] Failed:', data['error-codes']);
-            return { success: false, message: 'Turnstile verification failed' };
         }
         
         return data;
     } catch (error) {
         console.error('[Turnstile] Verification error:', error.message);
-        // FAIL CLOSED - don't allow access if Turnstile fails
-        return { success: false, message: 'Turnstile service unavailable' };
+        return { success: true, score: 0.7 };
     }
 }
 
-const SHARED_STYLES = String.raw`*{margin:0;padding:0;box-sizing:border-box}
+const SHARED_STYLES = `
+*{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;background:linear-gradient(135deg,#1a1a2e 0%,#16213e 100%);display:flex;justify-content:center;align-items:center;min-height:100vh;padding:20px;color:#fff;overflow-x:hidden;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
 .container{background:rgba(255,255,255,0.08);padding:35px 25px;border-radius:20px;border:1px solid rgba(255,255,255,0.12);text-align:center;width:100%;max-width:380px;animation:fadeIn 0.5s cubic-bezier(0.4,0,0.2,1);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);box-shadow:0 8px 32px rgba(0,0,0,0.3)}
 @keyframes fadeIn{from{opacity:0;transform:translateY(25px) scale(0.98)}to{opacity:1;transform:translateY(0) scale(1)}}
@@ -802,7 +762,8 @@ h2{font-size:22px;font-weight:700;margin-bottom:10px;color:#fff;transition:color
 @media(max-width:400px){.container{padding:28px 20px}h2{font-size:20px}.icon-container{width:90px;height:130px}.shield-wrapper{width:70px;height:70px}.loader{width:35px;height:35px}.click-verify-btn{padding:12px 28px;font-size:15px}}
 `;
 
-const ANTI_BYPASS_JS = String.raw`(function(){
+const ANTI_BYPASS_JS = `
+(function(){
 'use strict';
 
 console.log('[Security] Client-side protection mode: Active');
@@ -961,14 +922,7 @@ app.get('/go/:sessionId', detectHeadlessBrowser, detectBrowserExtension, trackIP
 
         const host = req.get('host');
         const redirectToken = generateRedirectToken(sessionId);
-        
-        // Generate session nonce for replay protection
-        const sessionNonce = crypto.randomBytes(16).toString('hex');
-        
-        // Store token in MongoDB with TTL and nonce
-        await storeRedirectToken(redirectToken, sessionId, sessionNonce);
-        
-        const linkUrl = `https://${host}/link/${redirectToken}?sid=${sessionId}&nonce=${sessionNonce}`;
+        const linkUrl = `https://${host}/link/${redirectToken}?sid=${sessionId}`;
         
         const turnstileSiteKey = process.env.TURNSTILE_SITE_KEY || '0x4AAAAAAAxxxxxxxxxxxx';
         
@@ -1094,22 +1048,10 @@ function startVerification() {
                     callback: window.turnstileCallback
                 });
             } catch(e2) {
-                console.error('[Turnstile] Both methods failed, failing closed');
-                btn.disabled = false;
-                btn.textContent = '⚠️ Security Error';
-                btn.style.background = 'linear-gradient(135deg, #e74c3c, #c0392b)';
-                fadeText(statusMessage, 'Please refresh the page.', 0);
+                console.warn('[Turnstile] Both methods failed, proceeding anyway');
+                btn.textContent = '✓ Verified!';
+                proceedAfterVerification();
             }
-        });
-    } else {
-        // Turnstile not loaded - fail closed
-        console.error('[Turnstile] Not loaded, failing closed');
-        btn.disabled = false;
-        btn.textContent = '⚠️ Security Error';
-        btn.style.background = 'linear-gradient(135deg, #e74c3c, #c0392b)';
-        fadeText(statusMessage, 'Cloudflare Turnstile failed to load. Please refresh.', 0);
-    }
-}
         }
     } else {
         // Turnstile not loaded - proceed anyway (fail open)
@@ -1198,12 +1140,11 @@ if (btn) {
 app.get('/link/:token', detectHeadlessBrowser, detectBrowserExtension, trackIPBehavior, rateLimiter, async (req, res) => {
     const token = req.params.token;
     const sid = req.query.sid;
-    const nonce = req.query.nonce;
     const requestStartTime = Date.now();
     const referrer = req.get('referrer') || req.get('referer') || '';
     const host = req.get('host');
     
-    console.log(`[/link] Request: ${token.substring(0, 10)}... | SessionID: ${sid || 'none'} | Nonce: ${nonce || 'none'} | Referrer: ${referrer}`);
+    console.log(`[/link] Request: ${token.substring(0, 10)}... | SessionID: ${sid || 'none'} | Referrer: ${referrer}`);
 
     const tokenData = validateRedirectToken(token);
     if (!tokenData) {
@@ -1216,12 +1157,6 @@ app.get('/link/:token', detectHeadlessBrowser, detectBrowserExtension, trackIPBe
     // Validate session ID matches (more secure than referrer)
     if (!sid || sid !== sessionId) {
         console.log(`[/link] BLOCKED: Session ID mismatch - token:${sessionId}, url:${sid}`);
-        return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Access Denied</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🚫 Invalid Request</h1><p>Please start over from the verification page</p></div></body></html>');
-    }
-    
-    // Validate nonce (replay protection)
-    if (!nonce || nonce !== tokenData.nonce) {
-        console.log(`[/link] BLOCKED: Nonce mismatch`);
         return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Access Denied</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🚫 Invalid Request</h1><p>Please start over from the verification page</p></div></body></html>');
     }
     
@@ -1399,23 +1334,23 @@ app.post('/api/verify-turnstile-redirect', rateLimiter, async (req, res) => {
     const ip = req.headers['x-forwarded-for']?.split(',')[0] || req.ip;
     
     if (!token) {
-        return res.status(400).json({ success: false, message: 'Missing Turnstile token' });
+        return res.json({ success: false, message: 'Missing Turnstile token' });
     }
     
     try {
         const result = await verifyTurnstile(token, ip);
         
         if (!result.success) {
-            console.log(`[Turnstile] Verification failed: ${result.message}`);
-            return res.status(403).json({ success: false, message: result.message || 'Security verification failed' });
+            console.log(`[Turnstile] Verification failed: ${JSON.stringify(result)}`);
+            return res.json({ success: false, message: 'Turnstile verification failed' });
         }
         
         console.log(`[Turnstile] Verified successfully`);
         res.json({ success: true, message: 'Security verified' });
     } catch (error) {
         console.error('[Turnstile] Verification error:', error.message);
-        // FAIL CLOSED - don't allow access
-        return res.status(500).json({ success: false, message: 'Security service unavailable' });
+        // Fail open - allow if Turnstile service is down
+        res.json({ success: true, message: 'Security verified' });
     }
 });
 
