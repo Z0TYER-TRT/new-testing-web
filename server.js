@@ -19,8 +19,8 @@ const API_SECRET_KEY = process.env.API_SECRET_KEY || 'Aniketsexvideo404SecureKey
 
 const JWT_SECRET = process.env.JWT_SECRET || 'AniketJWTSecret2023ForProductionUseSecureKey';
 
-const TURNSTILE_SITE_KEY = process.env.TURNSTILE_SITE_KEY || '0x4AAAAAACqSQ5npeA0O-71d';
-const TURNSTILE_SECRET_KEY = process.env.TURNSTILE_SECRET_KEY || '0x4AAAAAACqSQ_dxQjhwLcwWg6Hlt8S2-3Q';
+const TURNSTILE_SITE_KEY = process.env.TURNSTILE_SITE_KEY || '0x4AAAAAACqwSF3M1qaEqOLr';
+const TURNSTILE_SECRET_KEY = process.env.TURNSTILE_SECRET_KEY || '0x4AAAAAACqwSFN6U7ENA9mEIM64TdLcU4g';
 
 console.log('=================================');
 console.log('🚀 Server Starting...');
