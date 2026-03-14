@@ -879,7 +879,7 @@ app.get('/go/:sessionId', detectHeadlessBrowser, detectBrowserExtension, trackIP
         const redirectToken = generateRedirectToken(sessionId);
         const linkUrl = sanitizeForJS(`https://${host}/link/${redirectToken}?sid=${sessionId}`);
         
-        const turnstileSiteKey = process.env.TURNSTILE_SITE_KEY || '0x4AAAAAAAxxxxxxxxxxxx';
+        const turnstileSiteKey = process.env.TURNSTILE_SITE_KEY || '0x4AAAAAACq5truAfy0rEXqh';
         console.log(`[Turnstile] Site Key: ${turnstileSiteKey}`);
         
         res.send(`<!DOCTYPE html>
