@@ -57,6 +57,7 @@ const activeSessions = new Map();
 const sessionLocks = new Map();
 const behaviorTracking = new Map();
 const requestSignatures = new Map();
+const redirectTokens = new Map();
 
 function generateChallenge() {
     const challenge = {
@@ -104,7 +105,6 @@ function verifyChallenge(challengeId, answer) {
 }
 
 function generateRedirectToken(sessionId) {
-    const redirectTokens = new Map();
     const token = crypto.randomBytes(32).toString('base64url');
     const TOKEN_EXPIRY = 60000;
     redirectTokens.set(token, {
@@ -117,7 +117,6 @@ function generateRedirectToken(sessionId) {
 }
 
 function validateRedirectToken(token) {
-    const redirectTokens = new Map();
     const tokenData = redirectTokens.get(token);
     if (!tokenData) return null;
     
@@ -130,15 +129,16 @@ function validateRedirectToken(token) {
     return tokenData;
 }
 
-setInterval(() => {
-    const redirectTokens = new Map();
-    const now = Date.now();
-    for (const [token, data] of redirectTokens) {
-        if (now > data.expiresAt) {
-            redirectTokens.delete(token);
+if (process.env.VERCEL !== '1') {
+    setInterval(() => {
+        const now = Date.now();
+        for (const [token, data] of redirectTokens) {
+            if (now > data.expiresAt) {
+                redirectTokens.delete(token);
+            }
         }
-    }
-}, 30000);
+    }, 30000);
+}
 
 function detectHeadlessBrowser(req, res, next) {
     const userAgent = (req.get('User-Agent') || '').toLowerCase();
@@ -408,24 +408,27 @@ function rateLimiter(req, res, next) {
     next();
 }
 
-function turnstileMiddleware(req, res, next) {
-    const turnstileToken = req.get('CF-Turnstile-Token') || req.body.turnstile_token;
-    
-    if (!turnstileToken) {
-        return res.status(403).json({ success: false, message: 'Turnstile verification required' });
-    }
-    
-    const ip = req.headers['x-forwarded-for']?.split(',')[0] || req.ip;
-    
-    verifyTurnstile(turnstileToken, ip).then(result => {
+async function turnstileMiddleware(req, res, next) {
+    try {
+        const turnstileToken = req.get('CF-Turnstile-Token') || req.body.turnstile_token;
+        
+        if (!turnstileToken) {
+            return res.status(403).json({ success: false, message: 'Turnstile verification required' });
+        }
+        
+        const ip = req.headers['x-forwarded-for']?.split(',')[0] || req.ip;
+        
+        const result = await verifyTurnstile(turnstileToken, ip);
+        
         if (!result.success) {
             return res.status(403).json({ success: false, message: 'Turnstile verification failed' });
         }
+        
         next();
-    }).catch(err => {
+    } catch (err) {
         console.error('[Turnstile] Verification error:', err.message);
         return res.status(403).json({ success: false, message: 'Turnstile service error' });
-    });
+    }
 }
 
 function botGuard(req, res, next) {
@@ -1378,9 +1381,3 @@ if (require.main === module) {
 }
 
 module.exports = app;
-
-if (process.env.VERCEL) {
-    module.exports = (req, res) => {
-        app(req, res);
-    };
-}
