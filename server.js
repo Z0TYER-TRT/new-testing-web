@@ -352,9 +352,10 @@ function lockSession(sessionId) {
         lockedAt: Date.now()
     });
     
+    // Reduce lock duration to 30 seconds for better UX in serverless environment
     setTimeout(() => {
         sessionLocks.delete(key);
-    }, 300000);
+    }, 30000);
     
     return true;
 }
@@ -364,7 +365,8 @@ function isSessionLocked(sessionId) {
     const lock = sessionLocks.get(key);
     if (!lock) return false;
     
-    if (Date.now() - lock.lockedAt > 300000) {
+    // Reduced to 30 seconds for serverless environment
+    if (Date.now() - lock.lockedAt > 30000) {
         sessionLocks.delete(key);
         return false;
     }
@@ -948,11 +950,20 @@ function fadeText(element, text, delay) {
 window.turnstileCallback = function(token) {
     console.log('[Turnstile] Token received');
     
+    // Extract sessionId from linkUrl
+    var sessionId = '';
+    try {
+        var urlObj = new URL(linkUrl);
+        sessionId = urlObj.searchParams.get('sid');
+    } catch(e) {
+        console.error('[Turnstile] Failed to extract sessionId from linkUrl:', e);
+    }
+    
     // Send token to server for verification
     fetch('/api/verify-turnstile-redirect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: token })
+        body: JSON.stringify({ token: token, sessionId: sessionId })
     })
     .then(function(res) { return res.json(); })
     .then(function(data) {
@@ -1290,9 +1301,14 @@ app.get('/api/get-jwt', turnstileMiddleware, rateLimiter, async (req, res) => {
 app.post('/api/verify-turnstile-redirect', rateLimiter, async (req, res) => {
     const { token } = req.body;
     const ip = req.headers['x-forwarded-for']?.split(',')[0] || req.ip;
+    const sessionId = req.body.sessionId; // Get sessionId from request body
     
     if (!token) {
         return res.json({ success: false, message: 'Missing Turnstile token' });
+    }
+    
+    if (!sessionId) {
+        return res.json({ success: false, message: 'Missing session ID' });
     }
     
     try {
@@ -1303,7 +1319,11 @@ app.post('/api/verify-turnstile-redirect', rateLimiter, async (req, res) => {
             return res.json({ success: false, message: 'Turnstile verification failed' });
         }
         
-        console.log(`[Turnstile] Verified successfully`);
+        console.log(`[Turnstile] Verified successfully for session: ${sessionId}`);
+        
+        // Clear any existing lock on successful verification
+        sessionLocks.delete(sessionId);
+        
         res.json({ success: true, message: 'Security verified' });
     } catch (error) {
         console.error('[Turnstile] Verification error:', error.message);
