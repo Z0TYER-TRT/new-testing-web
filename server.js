@@ -620,11 +620,37 @@ app.get('/health', async (req, res) => {
     res.json(healthCheck);
 });
 
-app.get('/access/:sessionId', (req, res) => {
-    if (!isValidSessionId(req.params.sessionId)) {
+app.get('/access/:sessionId', detectHeadlessBrowser, detectBrowserExtension, trackIPBehavior, rateLimiter, async (req, res) => {
+    const sessionId = req.params.sessionId;
+    
+    if (!isValidSessionId(sessionId)) {
         return res.status(400).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Invalid</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>❌ Invalid Session</h1></div></body></html>');
     }
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+    
+    // Check if session exists in database
+    try {
+        const result = await findSession(sessionId);
+        if (!result) {
+            return res.status(404).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Not Found</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🔍 Session Not Found</h1></div></body></html>');
+        }
+
+        const sessionData = result.sessionData;
+        const ageSeconds = Math.floor((Date.now() - new Date(sessionData.created_at).getTime()) / 1000);
+        
+        if (ageSeconds > 900) {
+            return res.status(410).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Expired</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>⏰ Link Expired</h1></div></body></html>');
+        }
+        if (sessionData.used) {
+            return res.status(410).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Used</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>✅ Already Used</h1></div></body></html>');
+        }
+        
+        // Redirect to the verification page
+        return res.redirect(302, `/go/${sessionId}`);
+        
+    } catch (error) {
+        console.error('[/access] Error:', error.message);
+        return res.status(500).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Error</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>⚠️ Server Error</h1></div></body></html>');
+    }
 });
 
 async function verifyCaptcha(token, ip) {
@@ -896,7 +922,7 @@ app.get('/go/:sessionId', detectHeadlessBrowser, detectBrowserExtension, trackIP
 
         const host = req.get('host');
         const redirectToken = generateRedirectToken(sessionId);
-        const linkUrl = `https://${host}/link/${redirectToken}`;
+        const linkUrl = `https://${host}/link/${redirectToken}?sid=${sessionId}`;
         
         const turnstileSiteKey = process.env.TURNSTILE_SITE_KEY || '0x4AAAAAAAxxxxxxxxxxxx';
         
@@ -1053,11 +1079,12 @@ if (btn) {
 
 app.get('/link/:token', detectHeadlessBrowser, detectBrowserExtension, trackIPBehavior, rateLimiter, async (req, res) => {
     const token = req.params.token;
+    const sid = req.query.sid;
     const requestStartTime = Date.now();
     const referrer = req.get('referrer') || req.get('referer') || '';
     const host = req.get('host');
     
-    console.log(`[/link] Request: ${token.substring(0, 10)}... | Referrer: ${referrer}`);
+    console.log(`[/link] Request: ${token.substring(0, 10)}... | SessionID: ${sid || 'none'} | Referrer: ${referrer}`);
 
     const tokenData = validateRedirectToken(token);
     if (!tokenData) {
@@ -1067,26 +1094,18 @@ app.get('/link/:token', detectHeadlessBrowser, detectBrowserExtension, trackIPBe
     
     const sessionId = tokenData.sessionId;
     
-    let referrerValid = false;
-    if (!referrer || referrer === '') {
-        console.log(`[/link] BLOCKED: No referrer`);
-        return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Access Denied</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🚫 Referrer Required</h1><p>Please start over from the verification page</p></div></body></html>');
-    } else if (referrer.includes(host)) {
-        console.log(`[/link] Access granted (same origin)`);
-        referrerValid = true;
-    } else if (referrer.includes('/go/')) {
-        console.log(`[/link] Access granted (from /go/)`);
-        referrerValid = true;
-    } else if (referrer.includes('/access/')) {
-        console.log(`[/link] Access granted (from /access/)`);
-        referrerValid = true;
-    } else {
-        console.log(`[/link] BLOCKED: Invalid referrer - ${referrer.substring(0, 50)}...`);
-        return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Access Denied</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🚫 Invalid Referrer</h1><p>Please start over from the verification page</p></div></body></html>');
+    // Validate session ID matches (more secure than referrer)
+    if (!sid || sid !== sessionId) {
+        console.log(`[/link] BLOCKED: Session ID mismatch - token:${sessionId}, url:${sid}`);
+        return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Access Denied</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🚫 Invalid Request</h1><p>Please start over from the verification page</p></div></body></html>');
     }
     
-    if (!referrerValid) {
-        return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Access Denied</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🚫 Access Denied</h1><p>Please start over from the verification page</p></div></body></html>');
+    // Optional: Log referrer but don't block on it
+    if (referrer && (referrer.includes(host) || referrer.includes('/go/') || referrer.includes('/access/'))) {
+        console.log(`[/link] Valid referrer detected`);
+    } else {
+        console.log(`[/link] Warning: No or invalid referrer - ${referrer.substring(0, 50)}...`);
+        // Don't block - allow users with privacy settings
     }
 
     try {
