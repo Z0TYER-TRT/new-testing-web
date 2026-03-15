@@ -995,7 +995,7 @@ function proceedAfterVerification() {
 if (btn) {
     btn.onclick = startVerification;
 }
-})
+})()
 </script>
 </body>
 </html>`);
