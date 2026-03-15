@@ -988,7 +988,7 @@ window.turnstileCallback = function(token) {
 };
 
 function startVerification() {
-    if (clickVerified) return;
+    if (clickVerified) return false;
     
     // Check if required DOM elements exist
     if (!btn) {
@@ -996,7 +996,7 @@ function startVerification() {
         if (statusMessage) {
             fadeText(statusMessage, 'Error: Button not found. Please refresh the page.', 0);
         }
-        return;
+        return false;
     }
     
     btn.disabled = true;
@@ -1082,6 +1082,8 @@ function startVerification() {
             }
         }, 3000);
     }
+    
+    return false;
 }
 
 function proceedAfterVerification() {
