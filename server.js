@@ -658,8 +658,70 @@ app.get('/access/:sessionId', detectHeadlessBrowser, detectBrowserExtension, tra
             return res.status(410).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Used</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>✅ Already Used</h1></div></body></html>');
         }
         
-        // Redirect to the verification page
-        return res.redirect(302, `/go/${sessionId}`);
+        // Show a transition page before redirecting to verification
+        const host = req.get('host');
+        const redirectUrl = `/go/${sessionId}`;
+        
+        res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#1a1a2e">
+<title>🔐 Processing Link</title>
+<link rel="stylesheet" href="/style.css">
+<svg style="position:absolute;width:0;height:0"><defs><linearGradient id="shieldGradient" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#667eea;stop-opacity:1"/><stop offset="50%" style="stop-color:#764ba2;stop-opacity:1"/><stop offset="100%" style="stop-color:#667eea;stop-opacity:1"/></linearGradient></defs></svg>
+</head>
+<body>
+<div class="container" id="mainContainer">
+<div class="content">
+<div class="icon-container">
+<div class="shield-wrapper"><div class="shield-icon"><svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><path class="shield-body" d="M50 5 L20 18 V45 C20 65 35 85 50 92 C65 85 80 65 80 45 V18 L50 5 Z"/><path class="shield-check" d="M35 50 L48 63 L65 40"/></svg></div></div>
+</div>
+<h2>🔗 Processing Your Link</h2>
+<p class="message">Please wait while we prepare your secure verification...</p>
+<div class="progress-bar"><div class="progress" id="progress"></div></div>
+<p class="status-message" id="statusMessage">Validating session...</p>
+<div class="security-badge"><svg class="lock-icon" viewBox="0 0 24 24"><path d="M12 2C9.243 2 7 4.243 7 7V10H6C4.897 10 4 10.897 4 12V20C4 21.103 4.897 22 6 22H18C19.103 22 20 21.103 20 20V12C20 10.897 19.103 10 18 10H17V7C17 4.243 14.757 2 12 2ZM12 4C13.654 4 15 5.346 15 7V10H9V7C9 5.346 10.346 4 12 4ZM12 14C13.103 14 14 14.897 14 16C14 17.103 13.103 18 12 18C10.897 18 10 17.103 10 16C10 14.897 10.897 14 12 14Z"/></svg><span>Secure Session</span></div>
+</div>
+</div>
+<script>
+(function(){
+var progress = document.getElementById('progress');
+var statusMessage = document.getElementById('statusMessage');
+
+function fadeText(element, text, delay) {
+    delay = delay || 0;
+    if (!element) return;
+    setTimeout(function() {
+        element.style.opacity = '0.6';
+        setTimeout(function() {
+            element.textContent = text;
+            element.style.opacity = '1';
+        }, 150);
+    }, delay);
+}
+
+if (progress) {
+    progress.style.transition = 'none';
+    progress.style.width = '0%';
+    void progress.offsetWidth;
+    progress.style.transition = 'width 1.5s ease';
+    progress.style.width = '100%';
+}
+
+fadeText(statusMessage, 'Validating session...', 0);
+fadeText(statusMessage, 'Preparing verification...', 800);
+fadeText(statusMessage, 'Redirecting...', 1600);
+
+setTimeout(function() {
+    window.location.href = '${redirectUrl}';
+}, 2200);
+})()
+</script>
+</body>
+</html>`);
         
     } catch (error) {
         console.error('[/access] Error:', error.message);
