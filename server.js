@@ -921,7 +921,7 @@ app.get('/go/:sessionId', detectHeadlessBrowser, detectBrowserExtension, trackIP
 (function(){
 'use strict';
 var clickVerified = false;
-var linkUrl = '${linkUrl}';
+var linkUrl = '${sanitizeForJS(linkUrl)}';
 var btn = document.getElementById('clickVerifyBtn');
 var progressBar = document.getElementById('progressBar');
 var progress = document.getElementById('progress');
@@ -1034,7 +1034,7 @@ function startVerification() {
             console.error('[Turnstile] Execute error:', err);
             // Fallback - try direct call
             try {
-                turnstile.execute('${turnstileSiteKey}', {
+                turnstile.execute('${sanitizeForJS(turnstileSiteKey)}', {
                     callback: window.turnstileCallback
                 });
                 // Set timeout for fallback as well
