@@ -990,6 +990,15 @@ window.turnstileCallback = function(token) {
 function startVerification() {
     if (clickVerified) return;
     
+    // Check if required DOM elements exist
+    if (!btn) {
+        console.error('[StartVerification] Button element not found');
+        if (statusMessage) {
+            fadeText(statusMessage, 'Error: Button not found. Please refresh the page.', 0);
+        }
+        return;
+    }
+    
     btn.disabled = true;
     btn.textContent = '🔒 Verifying...';
     fadeText(statusMessage, 'Running security check...', 0);
@@ -1137,7 +1146,7 @@ function proceedAfterVerification() {
 }
 
 if (btn) {
-    btn.addEventListener('click', startVerification, { passive: true });
+    btn.onclick = startVerification;
 }
 })
 </script>
