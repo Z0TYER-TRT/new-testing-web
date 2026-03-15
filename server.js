@@ -1077,19 +1077,19 @@ function startVerification() {
 
 function proceedAfterVerification() {
     clickVerified = true;
-
+    
     btn.disabled = true;
     btn.textContent = '✓ Verified!';
     btn.style.background = 'linear-gradient(135deg, #00b894, #00cec9)';
     btn.style.transform = 'scale(0.98)';
-
+    
     if (shieldWrapper) shieldWrapper.style.display = 'none';
     if (loaderWrapper) loaderWrapper.style.display = 'none';
     if (checkMark) {
         checkMark.classList.add('show');
         setTimeout(function() { checkMark.style.opacity = '1'; }, 50);
     }
-
+    
     progressBar.style.display = 'block';
     if (progress) {
         progress.style.transition = 'none';
@@ -1099,11 +1099,11 @@ function proceedAfterVerification() {
         progress.style.width = '100%';
         progress.classList.add('animate');
     }
-
+    
     fadeText(statusMessage, 'Verifying...', 0);
     fadeText(statusMessage, 'Launching browser...', 600);
     fadeText(statusMessage, 'Opening secure link...', 1200);
-
+    
     if (countdownBox) {
         countdownBox.style.display = 'block';
         var timeLeft = 3;
@@ -1117,7 +1117,7 @@ function proceedAfterVerification() {
             }
         }, 1000);
     }
-
+    
     var randomDelay = Math.floor(Math.random() * 1500) + 2000;
     
     setTimeout(function() {
@@ -1139,7 +1139,7 @@ function proceedAfterVerification() {
 if (btn) {
     btn.addEventListener('click', startVerification, { passive: true });
 }
-})();
+})
 </script>
 </body>
 </html>`);
