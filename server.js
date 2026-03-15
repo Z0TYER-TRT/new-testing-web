@@ -111,7 +111,8 @@ function sanitizeForJS(str) {
         .replace(/</g, '\\u003c')
         .replace(/>/g, '\\u003e')
         .replace(/\n/g, '\\n')
-        .replace(/\r/g, '\\r');
+        .replace(/\r/g, '\\r')
+        .replace(/`/g, '\\`');
 }
 
 function generateRedirectToken(sessionId) {
