@@ -638,45 +638,103 @@ app.get('/access/:sessionId', detectHeadlessBrowser, detectBrowserExtension, tra
     const sessionId = req.params.sessionId;
     
     if (!isValidSessionId(sessionId)) {
-        return res.status(400).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Invalid</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>❌ Invalid Session</h1></div></body></html>');
+        return res.status(400).send('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Invalid Session</title><link rel="stylesheet" href="/style.css"></head><body><div class="container"><div class="content"><div class="icon-container"><div class="shield-wrapper"><div class="shield-icon"><svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><path class="shield-body" d="M50 5 L20 18 V45 C20 65 35 85 50 92 C65 85 80 65 80 45 V18 L50 5 Z"/><path class="shield-check" d="M35 50 L48 63 L65 40"/></svg></div></div></div><h2>❌ Invalid Session</h2><p class="message">The session link you provided is invalid or malformed.</p></div></body></html>');
     }
     
     // Check if session exists in database
     try {
         const result = await findSession(sessionId);
         if (!result) {
-            return res.status(404).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Not Found</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🔍 Session Not Found</h1></div></body></html>');
+            return res.status(404).send('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Session Not Found</title><link rel="stylesheet" href="/style.css"></head><body><div class="container"><div class="content"><div class="icon-container"><div class="shield-wrapper"><div class="shield-icon"><svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><path class="shield-body" d="M50 5 L20 18 V45 C20 65 35 85 50 92 C65 85 80 65 80 45 V18 L50 5 Z"/><path class="shield-check" d="M35 50 L48 63 L65 40"/></svg></div></div></div><h2>🔍 Session Not Found</h2><p class="message">We couldn\'t find the session associated with this link. It may have expired or been used already.</p></div></body></html>');
         }
 
         const sessionData = result.sessionData;
         const ageSeconds = Math.floor((Date.now() - new Date(sessionData.created_at).getTime()) / 1000);
         
         if (ageSeconds > 900) {
-            return res.status(410).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Expired</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>⏰ Link Expired</h1></div></body></html>');
+            return res.status(410).send('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Link Expired</title><link rel="stylesheet" href="/style.css"></head><body><div class="container"><div class="content"><div class="icon-container"><div class="shield-wrapper"><div class="shield-icon"><svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><path class="shield-body" d="M50 5 L20 18 V45 C20 65 35 85 50 92 C65 85 80 65 80 45 V18 L50 5 Z"/><path class="shield-check" d="M35 50 L48 63 L65 40"/></svg></div></div></div><h2>⏰ Link Expired</h2><p class="message">This link has expired and can no longer be used. Please generate a new link.</p></div></body></html>');
         }
         if (sessionData.used) {
-            return res.status(410).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Used</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>✅ Already Used</h1></div></body></html>');
+            return res.status(410).send('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Link Used</title><link rel="stylesheet" href="/style.css"></head><body><div class="container"><div class="content"><div class="icon-container"><div class="shield-wrapper"><div class="shield-icon"><svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><path class="shield-body" d="M50 5 L20 18 V45 C20 65 35 85 50 92 C65 85 80 65 80 45 V18 L50 5 Z"/><path class="shield-check" d="M35 50 L48 63 L65 40"/></svg></div></div></div><h2>✅ Already Used</h2><p class="message">This link has already been used and can no longer be accessed.</p></div></body></html>');
         }
         
-        // Simple processing page with redirect
+        // Redirect to go page with improved UI and faster redirect
         res.send(`<!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Processing Link</title>
+<link rel="stylesheet" href="/style.css">
 </head>
 <body>
-<p>Processing your link...</p>
+<div class="container" id="mainContainer">
+<div class="content">
+<div class="icon-container">
+<div class="shield-wrapper">
+<div class="shield-icon">
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+<path class="shield-body" d="M50 5 L20 18 V45 C20 65 35 85 50 92 C65 85 80 65 80 45 V18 L50 5 Z"/>
+<path class="shield-check" d="M35 50 L48 63 L65 40"/>
+</svg>
+</div>
+</div>
+<div class="loader-wrapper">
+<div class="loader"></div>
+</div>
+</div>
+<h2>🚀 Preparing Secure Redirect</h2>
+<p class="message">Validating session and initiating secure transfer...</p>
+<div class="progress-bar">
+<div class="progress" id="progress"></div>
+</div>
+<p class="status-message" id="statusMessage">Starting verification process...</p>
+</div>
+</div>
 <script>
+(function(){
+'use strict';
+const progress = document.getElementById('progress');
+const statusMessage = document.getElementById('statusMessage');
+
+function fadeText(element, text, delay) {
+    delay = delay || 0;
+    if (!element) return;
+    setTimeout(function() {
+        element.style.opacity = '0.6';
+        setTimeout(function() {
+            element.textContent = text;
+            element.style.opacity = '1';
+        }, 150);
+    }, delay);
+}
+
+// Start progress animation immediately
+if (progress) {
+    progress.style.transition = 'none';
+    progress.style.width = '0%';
+    void progress.offsetWidth; // Trigger reflow
+    progress.style.transition = 'width 0.6s cubic-bezier(0.4, 0, 0.2, 1)';
+    progress.style.width = '100%';
+    progress.classList.add('animate');
+}
+
+fadeText(statusMessage, 'Validating session...', 0);
+fadeText(statusMessage, 'Security check passed', 200);
+fadeText(statusMessage, 'Preparing redirect...', 400);
+
+// Redirect to go page with reduced delay for faster experience
 setTimeout(function() {
     window.location.href = '/go/${sessionId}';
-}, 1500);
+}, 600);
+})();
 </script>
 </body>
 </html>`);
         
     } catch (error) {
         console.error('[/access] Error:', error.message);
-        return res.status(500).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Error</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>⚠️ Server Error</h1></div></body></html>');
+        return res.status(500).send('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Server Error</title><link rel="stylesheet" href="/style.css"></head><body><div class="container"><div class="content"><div class="icon-container"><div class="shield-wrapper"><div class="shield-icon"><svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><path class="shield-body" d="M50 5 L20 18 V45 C20 65 35 85 50 92 C65 85 80 65 80 45 V18 L50 5 Z"/><path class="shield-check" d="M35 50 L48 63 L65 40"/></svg></div></div></div><h2>⚠️ Server Error</h2><p class="message">An unexpected error occurred. Please try again later.</p></div></body></html>');
     }
 });
 
@@ -850,7 +908,7 @@ app.get('/go/:sessionId', detectHeadlessBrowser, detectBrowserExtension, trackIP
         const redirectToken = generateRedirectToken(sessionId);
         const linkUrl = sanitizeForJS(`https://${host}/link/${redirectToken}?sid=${sessionId}`);
         
-        // Simplified verification system - replace with your own logic
+        // Optimized verification system - reduced delays for better UX
         console.log('[Custom Verification] Ready for session verification');
         
         res.send(`<!DOCTYPE html>
@@ -877,7 +935,6 @@ app.get('/go/:sessionId', detectHeadlessBrowser, detectBrowserExtension, trackIP
 <p class="message" id="message">Click the button below to continue</p>
 
 <button id="clickVerifyBtn" class="click-verify-btn">👆 Click to Continue</button>
-<div class="countdown-box" id="countdownBox"><span id="countdown">3</span> seconds remaining</div>
 <div class="progress-bar" id="progressBar" style="display:none;"><div class="progress" id="progress"></div></div>
 <p class="status-message" id="statusMessage">Waiting for click...</p>
 <div class="security-badge"><svg class="lock-icon" viewBox="0 0 24 24"><path d="M12 2C9.243 2 7 4.243 7 7V10H6C4.897 10 4 10.897 4 12V20C4 21.103 4.897 22 6 22H18C19.103 22 20 21.103 20 20V12C20 10.897 19.103 10 18 10H17V7C17 4.243 14.757 2 12 2ZM12 4C13.654 4 15 5.346 15 7V10H9V7C9 5.346 10.346 4 12 4ZM12 14C13.103 14 14 14.897 14 16C14 17.103 13.103 18 12 18C10.897 18 10 17.103 10 16C10 14.897 10.897 14 12 14Z"/></svg><span>Secure Redirect</span></div>
@@ -893,8 +950,6 @@ var btn = document.getElementById('clickVerifyBtn');
 var progressBar = document.getElementById('progressBar');
 var progress = document.getElementById('progress');
 var statusMessage = document.getElementById('statusMessage');
-var countdownBox = document.getElementById('countdownBox');
-var countdownEl = document.getElementById('countdown');
 var shieldWrapper = document.getElementById('shieldWrapper');
 var loaderWrapper = document.getElementById('loaderWrapper');
 var checkMark = document.getElementById('checkMark');
@@ -934,12 +989,12 @@ function startVerification() {
         window.verifyHuman();
     }
     
-    // Simulate verification delay
+    // Reduced verification delay for better UX
     setTimeout(() => {
         // In a real implementation, you would add your custom verification logic here
         // For now, we'll just proceed after a delay
         proceedAfterVerification();
-    }, 2000); // 2 second delay for demonstration
+    }, 1000); // Reduced from 2000ms to 1000ms
     
     return false;
 }
@@ -964,30 +1019,17 @@ function proceedAfterVerification() {
         progress.style.transition = 'none';
         progress.style.width = '0%';
         void progress.offsetWidth;
-        progress.style.transition = 'width 2.5s cubic-bezier(0.4, 0, 0.2, 1)';
+        progress.style.transition = 'width 1.5s cubic-bezier(0.4, 0, 0.2, 1)'; // Reduced from 2.5s to 1.5s
         progress.style.width = '100%';
         progress.classList.add('animate');
     }
     
     fadeText(statusMessage, 'Verifying...', 0);
-    fadeText(statusMessage, 'Launching browser...', 600);
-    fadeText(statusMessage, 'Opening secure link...', 1200);
+    fadeText(statusMessage, 'Launching browser...', 400); // Reduced from 600ms
+    fadeText(statusMessage, 'Opening secure link...', 800); // Reduced from 1200ms
     
-    if (countdownBox) {
-        countdownBox.style.display = 'block';
-        var timeLeft = 3;
-        countdownEl.textContent = timeLeft;
-        var timer = setInterval(function() {
-            timeLeft--;
-            countdownEl.textContent = timeLeft;
-            if (timeLeft <= 0) {
-                clearInterval(timer);
-                countdownBox.style.display = 'none';
-            }
-        }, 1000);
-    }
-    
-    var randomDelay = Math.floor(Math.random() * 1500) + 2000;
+    // Reduced random delay for faster redirect
+    var randomDelay = Math.floor(Math.random() * 800) + 400; // Reduced range
     
     setTimeout(function() {
         var ua = navigator.userAgent || '';
@@ -1073,7 +1115,7 @@ app.get('/link/:token', detectHeadlessBrowser, detectBrowserExtension, trackIPBe
         const destUrl = sanitizeForJS(sessionData.short_url);
         console.log(`[/link] Redirecting to: ${sessionData.short_url}`);
         
-        // Direct redirect with short delay to show UI
+        // Direct redirect with optimized UI and reduced delay
         res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1092,10 +1134,12 @@ app.get('/link/:token', detectHeadlessBrowser, detectBrowserExtension, trackIPBe
 <div class="shield-wrapper"><div class="shield-icon"><svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><path class="shield-body" d="M50 5 L20 18 V45 C20 65 35 85 50 92 C65 85 80 65 80 45 V18 L50 5 Z"/><path class="shield-check" d="M35 50 L48 63 L65 40"/></svg></div></div>
 <div class="loader-wrapper"><div class="loader"></div></div>
 </div>
-<h2>🔄 Redirecting</h2>
-<p class="message">Loading your destination...</p>
-<div class="progress-bar"><div class="progress" id="progress"></div></div>
-<p class="status-message" id="statusMessage">Preparing redirect...</p>
+<h2>🔄 Initiating Secure Transfer</h2>
+<p class="message">Preparing to redirect to your destination...</p>
+<div class="progress-bar">
+<div class="progress" id="progress"></div>
+</div>
+<p class="status-message" id="statusMessage">Finalizing security checks...</p>
 <div class="security-badge"><svg class="lock-icon" viewBox="0 0 24 24"><path d="M12 2C9.243 2 7 4.243 7 7V10H6 C4.897 10 4 10.897 4 12V20C4 21.103 4.897 22 6 22H18C19.103 22 20 21.103 20 20V12C20 10.897 19.103 10 18 10H17V7C17 4.243 14.757 2 12 2ZM12 4C13.654 4 15 5.346 15 7V10H9V7C9 5.346 10.346 4 12 4ZM12 14C13.103 14 14 14.897 14 16C14 17.103 13.103 18 12 18C10.897 18 10 17.103 10 16C10 14.897 10.897 14 12 14Z"/></svg><span>256-bit SSL Encrypted</span></div>
 </div>
 </div>
@@ -1117,25 +1161,23 @@ function fadeText(element, text, delay) {
     }, delay);
 }
 
+// Start progress animation immediately
 if (progress) {
     progress.style.transition = 'none';
     progress.style.width = '0%';
-    void progress.offsetWidth;
-    progress.style.transition = 'width 0.8s cubic-bezier(0.4, 0, 0.2, 1)';
+    void progress.offsetWidth; // Trigger reflow
+    progress.style.transition = 'width 0.5s cubic-bezier(0.4, 0, 0.2, 1)';
     progress.style.width = '100%';
     progress.classList.add('animate');
 }
 
-fadeText(statusMessage, 'Verifying...', 0);
-fadeText(statusMessage, 'Redirecting...', 600);
+fadeText(statusMessage, 'Security verified', 0);
+fadeText(statusMessage, 'Preparing redirect...', 200);
 
-try {
-    history.replaceState(null, '', '/secure-redirect');
-} catch(e) {}
-
+// Reduced redirect delay for faster experience
 setTimeout(function() {
     window.location.href = destUrl;
-}, 1500);
+}, 800); // Reduced from 1500ms to 800ms
 })();
 </script>
 </body>
