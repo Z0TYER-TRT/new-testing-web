@@ -117,15 +117,6 @@ function animateProgress() {
 // Click Verification
 async function verifyClick() {
     if (clickVerified || !sessionId) return;
-    
-    // Honeypot check (FREE!) - Bots fill hidden fields
-    const honeypot = document.getElementById('honeypot');
-    if (honeypot && honeypot.value && honeypot.value.trim() !== '') {
-        console.warn('[Security] Honeypot triggered');
-        showError('Bot detected');
-        return;
-    }
-    
     clickTime = Date.now();
     clickVerified = true;
     console.log('Click verified! Mouse movements:', mouseMovements);
@@ -188,7 +179,7 @@ function handleRedirect(redirectPath) {
     const protocol = window.location.protocol;
     const fullUrl = `${protocol}//${host}${redirectPath}`;
     updateStatus('Opening...', '#667eea');
-    setTimeout(() => { window.location.href = fullUrl; }, 400);
+    setTimeout(() => { window.location.replace(fullUrl); }, 400);
 }
 
 // Start Countdown
