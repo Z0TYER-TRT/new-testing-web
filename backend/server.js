@@ -33,10 +33,19 @@ const SUSPICIOUS_PATTERNS = [
 ];
 
 // Allowed referers (must come from our domain)
-const ALLOWED_REFERERS = ['redirect-kawaii.vercel.app'];
+// Support multiple Vercel domains - use VERCEL_URL env var if available
+const ALLOWED_REFERERS = [
+  'redirect-kawaii.vercel.app',
+  'new-testing-web-backend.vercel.app'
+];
+
+// Build allowed origins from env or use defaults
 const ALLOWED_ORIGINS = [
   /^https?:\/\/[^\/]*redirect-kawaii\.vercel\.app$/,
-  /^https?:\/\/localhost:\d+$/  // Only for local development
+  /^https?:\/\/[^\/]*new-testing-web-backend\.vercel\.app$/,
+  /^https?:\/\/[^\/]*-zxcs-projects-b70044f5\.vercel\.app$/, // Vercel preview URLs
+  /^https?:\/\/[^\/]*\.vercel\.app$/,  // Any Vercel app (for flexibility)
+  /^https?:\/\/localhost:\d+$/ // Only for local development
 ];
 
 // Debug flag for logging
