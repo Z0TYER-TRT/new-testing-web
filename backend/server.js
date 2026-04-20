@@ -456,11 +456,14 @@ app.get('/health', (req, res) => res.json({
     vercel: process.env.VERCEL === '1'
 }));
 
+// Redirect /access to /go for consistent token generation and validation
 app.get('/access/:sessionId', (req, res) => {
-    if (!isValidSessionId(req.params.sessionId)) {
-        return res.status(400).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Invalid</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>❌ Invalid Session</h1></div></body></html>');
-    }
-    res.sendFile(path.join(__dirname, '..', 'frontend', 'index.html'));
+  const sessionId = req.params.sessionId;
+  if (!isValidSessionId(sessionId)) {
+    return res.status(400).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Invalid</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>❌ Invalid Session</h1></div></body></html>');
+  }
+  // Redirect to /go for proper session validation and token generation
+  res.redirect(307, `/go/${sessionId}`);
 });
 
 // ==========================================
@@ -942,7 +945,9 @@ app.post('/api/verify-click', rateLimiter, apiGuard, async (req, res) => {
 const clientSessions = new Map();
 
 app.post('/api/command', rateLimiter, apiGuard, async (req, res) => {
-  const { action, session_id } = req.body;
+  // Support both short (a, s) and long (action, session_id) field names
+  const action = req.body.action || req.body.a;
+  const session_id = req.body.session_id || req.body.s;
   const clientIp = getClientIp(req);
 
   if (!action || !session_id) {
@@ -1128,7 +1133,9 @@ app.post('/api/command', rateLimiter, apiGuard, async (req, res) => {
 // Short alias for command endpoint (to obscure from bypass tools)
 // Shares same logic as /api/command
 app.post('/api/c', rateLimiter, apiGuard, async (req, res) => {
-  const { action, session_id } = req.body;
+  // Support both short (a, s) and long (action, session_id) field names
+  const action = req.body.action || req.body.a;
+  const session_id = req.body.session_id || req.body.s;
   const clientIp = getClientIp(req);
 
   if (!action || !session_id) {
