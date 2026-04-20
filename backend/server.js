@@ -478,14 +478,87 @@ app.get('/health', (req, res) => res.json({
     vercel: process.env.VERCEL === '1'
 }));
 
-// Redirect /access to /go for consistent token generation and validation
-app.get('/access/:sessionId', (req, res) => {
+// ==========================================
+// 🔓 ACCESS PATH (Shows verification UI directly - same as /go)
+// ==========================================
+app.get('/access/:sessionId', rateLimiter, async (req, res) => {
   const sessionId = req.params.sessionId;
+  if (DEBUG) console.log(`[/access] Request: ${sessionId}`);
+
   if (!isValidSessionId(sessionId)) {
-    return res.status(400).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Invalid</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>❌ Invalid Session</h1></div></body></html>');
+    return res.status(400).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Invalid</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>❌ Invalid Link</h1></div></body></html>');
   }
-  // Redirect to /go for proper session validation and token generation
-  res.redirect(307, `/go/${sessionId}`);
+
+  try {
+    const result = await findSession(sessionId);
+    if (!result) {
+      if (DEBUG) console.log(`[/access] Session NOT FOUND: ${sessionId}`);
+      return res.status(404).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Not Found</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🔍 Link Not Found</h1></div></body></html>');
+    }
+
+    const { sessionData, collection } = result;
+    const ageSeconds = Math.floor((Date.now() - new Date(sessionData.created_at).getTime()) / 1000);
+
+    if (ageSeconds > 900) {
+      return res.status(410).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Expired</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>⏰ Link Expired</h1></div></body></html>');
+    }
+    if (sessionData.used) {
+      return res.status(410).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Used</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>✅ Already Used</h1></div></body></html>');
+    }
+    if (sessionData.access_count >= 3) {
+      return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Blocked</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🚫 Too Many Attempts</h1></div></body></html>');
+    }
+    if (!sessionData.short_url || !isValidUrl(sessionData.short_url)) {
+      return res.status(400).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Invalid</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>⚠️ Invalid Destination</h1></div></body></html>');
+    }
+
+    const minWaitMs = 3000;
+    const timeSinceCreation = Date.now() - new Date(sessionData.created_at).getTime();
+    if (timeSinceCreation < minWaitMs) {
+      await new Promise(resolve => setTimeout(resolve, minWaitMs - timeSinceCreation));
+    }
+
+    await collection.updateOne({ session_id: sessionId }, { $inc: { access_count: 1 } });
+
+    // Return the same UI as /go
+    res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#1a1a2e">
+<title>🔐 Click to Continue</title>
+<style>${SHARED_STYLES}</style>
+<svg style="position:absolute;width:0;height:0"><defs><linearGradient id="shieldGradient" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#667eea;stop-opacity:1"/><stop offset="50%" style="stop-color:#764ba2;stop-opacity:1"/><stop offset="100%" style="stop-color:#667eea;stop-opacity:1"/></linearGradient></defs></svg>
+</head>
+<body data-verified="true">
+<div class="container" id="mainContainer">
+<div class="content">
+<div class="icon-container">
+<div class="shield-wrapper" id="shieldWrapper"><div class="shield-icon"><svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><path class="shield-body" d="M50 5 L20 18 V45 C20 65 35 85 50 92 C65 85 80 65 80 45 V18 L50 5 Z"/><path class="shield-check" d="M35 50 L48 63 L65 40"/></svg></div></div>
+<div class="loader-wrapper" id="loaderWrapper"><div class="loader"></div></div>
+<div class="check-mark" id="checkMark">✓</div>
+<div class="cross-mark" id="crossMark">✗</div>
+</div>
+<h2 id="title">🚀 Human Verification</h2>
+<p class="message" id="message">Click the button below to continue</p>
+<button id="clickVerifyBtn" class="click-verify-btn">👆 Click to Continue</button>
+<div class="countdown-box" id="countdownBox"><span id="countdown">3</span> seconds remaining</div>
+<div class="progress-bar" id="progressBar" style="display:none;"><div class="progress" id="progress"></div></div>
+<p class="status-message" id="statusMessage">Waiting for click...</p>
+<div class="security-badge"><svg class="lock-icon" viewBox="0 0 24 24"><path d="M12 2C9.243 2 7 4.243 7 7V10H6C4.897 10 4 10.897 4 12V20C4 21.103 4.897 22 6 22H18C19.103 22 20 21.103 20 20V12C20 10.897 19.103 10 18 10H17V7C17 4.243 14.757 2 12 2ZM12 4C13.654 4 15 5.346 15 7V10H9V7C9 5.346 10.346 4 12 4ZM12 14C13.103 14 14 14.897 14 16C14 17.103 13.103 18 12 18C10.897 18 10 17.103 10 16C10 14.897 10.897 14 12 14Z"/></svg><span>Secure Redirect</span></div>
+</div>
+</div>
+<script>${ANTI_BYPASS_JS}</script>
+<script src="/script.js"></script>
+</body>
+</html>`);
+
+  } catch (error) {
+    console.error('[/access] Error:', error.message);
+    return res.status(500).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Error</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>⚠️ Server Error</h1></div></body></html>');
+  }
 });
 
 // ==========================================
@@ -1221,14 +1294,14 @@ app.post('/api/c', rateLimiter, apiGuard, async (req, res) => {
           { $inc: { access_count: 1 } }
         );
 
-    return res.json({
-      success: true,
-      c: [
-        { t: 'ui', d: { id: 'clickVerifyBtn', styles: { display: 'inline-block' } } },
-        { t: 'ui', d: { id: 'status-message', text: 'Click the button to continue' } }
-      ],
-      k: challengeToken
-    });
+      return res.json({
+        success: true,
+        c: [
+          { t: 'ui', d: { id: 'clickVerifyBtn', styles: { display: 'inline-block' } } },
+          { t: 'ui', d: { id: 'statusMessage', text: 'Click the button to continue' } }
+        ],
+        k: challengeToken
+      });
       }
 
       case 'c': { // click
@@ -1271,21 +1344,22 @@ app.post('/api/c', rateLimiter, apiGuard, async (req, res) => {
           console.error('[c] Update error:', err.message);
         }
 
-        // Return countdown sequence
-        return res.json({
-          success: true,
-          c: [
-            { t: 'ui', d: { id: 'btn', styles: { disabled: true }, text: '✓ Verified' } },
-            { t: 'ui', d: { id: 'shieldWrapper', styles: { display: 'none' } } },
-            { t: 'ui', d: { id: 'loaderWrapper', styles: { display: 'none' } } },
-            { t: 'ui', d: { id: 'checkMark', class: 'show' } },
-            { t: 'ui', d: { id: 'title', text: '✅ Access Granted' } },
-            { t: 'ui', d: { id: 'message', text: 'Redirecting...' } },
-            { t: 'ui', d: { id: 'countdownBox', styles: { display: 'block' } } },
-            { t: 'ui', d: { id: 'progressBar', styles: { display: 'block' } } },
-            { t: 'ui', d: { id: 'progress', styles: { transition: 'width 3s linear', width: '100%' } } }
-          ]
-        });
+      // Return countdown sequence with countdown command
+      return res.json({
+        success: true,
+        c: [
+          { t: 'ui', d: { id: 'clickVerifyBtn', styles: { disabled: true }, text: '✓ Verified' } },
+          { t: 'ui', d: { id: 'shieldWrapper', styles: { display: 'none' } } },
+          { t: 'ui', d: { id: 'loaderWrapper', styles: { display: 'none' } } },
+          { t: 'ui', d: { id: 'checkMark', class: 'show' } },
+          { t: 'ui', d: { id: 'title', text: '✅ Access Granted' } },
+          { t: 'ui', d: { id: 'message', text: 'Redirecting...' } },
+          { t: 'ui', d: { id: 'countdownBox', styles: { display: 'block' } } },
+          { t: 'ui', d: { id: 'progressBar', styles: { display: 'block' } } },
+          { t: 'ui', d: { id: 'progress', styles: { transition: 'width 3s linear', width: '100%' } } },
+          { t: 'countdown', d: 3 }
+        ]
+      });
       }
 
       case 'r': { // redirect
