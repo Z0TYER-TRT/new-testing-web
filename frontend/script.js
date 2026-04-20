@@ -49,6 +49,14 @@ function isAllowedRedirect(url) {
 
 // Server commands (map short codes to handlers)
 const cmds = {
+  // Init: Hide loader, show button
+  i: () => {
+    hide(ui.loaderWrapper);
+    hide(ui.shieldWrapper);
+    if (ui.clickVerifyBtn) ui.clickVerifyBtn.style.display = 'inline-block';
+    if (ui.statusMessage) ui.statusMessage.textContent = 'Click the button to continue';
+  },
+
   // UI updates with proper animations
   ui: (d) => {
     const el = ui[d.id];
@@ -99,6 +107,13 @@ const cmds = {
     // Clear countdown if error
     if (countdownInterval) clearInterval(countdownInterval);
   },
+
+  // Short codes for countdown and redirect
+  cd: (seconds) => cmds.countdown(seconds),
+  rd: (url) => cmds.redirect(url),
+
+  // Short code for error
+  e: (msg) => cmds.error(msg),
 
   // Start countdown
   countdown: (seconds) => {
