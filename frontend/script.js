@@ -1,3 +1,4 @@
+// 🔒 MINIMAL FRONTEND - All animations preserved
 (function() {
   'use strict';
 
@@ -112,18 +113,38 @@ const cmds = {
 
   const sid = location.pathname.split('/').pop();
 
-  async function send(a) {
-    try {
-      const res = await fetch('/api/c', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({ a: a, s: sid, t: Date.now() })
-      });
-      const data = await res.json();
-      if (data.c) data.c.forEach(cmd => cmds[cmd.t] && cmds[cmd.t](cmd.d));
-    } catch (e) { cmds.error('Connection failed'); }
+async function send(a) {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+
+    const res = await fetch('/api/c', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ a: a, s: sid, t: Date.now() }),
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+
+    if (!res.ok) {
+      const text = await res.text();
+      console.error('API Error:', res.status, text);
+      cmds.error(`Server error: ${res.status}`);
+      return;
+    }
+
+    const data = await res.json();
+    if (data.c) data.c.forEach(cmd => cmds[cmd.t] && cmds[cmd.t](cmd.d));
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      cmds.error('Request timeout - please refresh');
+    } else {
+      console.error('Fetch error:', e);
+      cmds.error('Connection failed - check console');
+    }
   }
+}
 
   if (ui.clickVerifyBtn) ui.clickVerifyBtn.onclick = () => send('c');
   
