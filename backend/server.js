@@ -521,50 +521,57 @@ h2{font-size:22px;font-weight:700;margin-bottom:10px;color:#fff;transition:color
 // ==========================================
 const ANTI_BYPASS_JS = `
 (function(){
-  'use strict';
-  
-  // Bot/Automation Detection
-  const detectBot = () => {
-    const checks = [
-      () => navigator.webdriver === true,
-      () => !!window.__selenium,
-      () => !!window.__webdriver_script_fn,
-      () => !!window.callPhantom || !!window._phantom,
-      () => !!window.callSelenium,
-      () => !!window.cdc_adoQpoasnfa76pfcZLmcfl_Array,
-      () => !!window.cdc_adoQpoasnfa76pfcZLmcfl_Promise,
-      () => !!window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol,
-      () => !!document.__selenium_evaluate,
-      () => !!document.__webdriver_evaluate,
-      () => navigator.userAgent.includes('HeadlessChrome'),
-      () => navigator.userAgent.includes('PhantomJS'),
-      () => navigator.userAgent.includes('Selenium'),
-      () => navigator.userAgent.includes('WebDriver'),
-      () => /bot|crawler|spider|crawling/i.test(navigator.userAgent),
-      () => window.outerWidth === 0 && window.outerHeight === 0,
-      () => window.screen.width === 0 || window.screen.height === 0,
-      () => !navigator.plugins.length && navigator.userAgent.includes('Chrome'),
-      () => navigator.languages === undefined || navigator.languages.length === 0,
-      () => window.Notification && Notification.permission === 'default' && !('PushManager' in window),
-      () => new Promise((resolve) => {
-        const canvas = document.createElement('canvas');
-        const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-        if (!gl) { resolve(false); return; }
-        const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
-        if (!debugInfo) { resolve(false); return; }
+'use strict';
+
+// Bot/Automation Detection - Mobile-friendly
+const detectBot = () => {
+  const ua = navigator.userAgent.toLowerCase();
+  const isMobile = /mobile|android|iphone|ipad|ipod/i.test(ua);
+
+  // Strong bot indicators (always check)
+  if (navigator.webdriver === true) return true;
+
+  // Automation globals
+  const hasAutomationGlobals = !!(
+    window.__selenium ||
+    window.__webdriver_script_fn ||
+    window.callPhantom ||
+    window._phantom ||
+    window.callSelenium ||
+    window.cdc_adoQpoasnfa76pfcZLmcfl_Array ||
+    window.cdc_adoQpoasnfa76pfcZLmcfl_Promise ||
+    window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol ||
+    document.__selenium_evaluate ||
+    document.__webdriver_evaluate
+  );
+  if (hasAutomationGlobals) return true;
+
+  // User agent bot keywords
+  const botKeywords = ['headlesschrome', 'phantomjs', 'selenium', 'webdriver', 'bot', 'crawler', 'spider'];
+  if (botKeywords.some(kw => ua.includes(kw))) return true;
+
+  // Desktop-only checks (skip for mobile)
+  if (!isMobile) {
+    if (window.outerWidth === 0 && window.outerHeight === 0) return true;
+    if (window.screen.width === 0 || window.screen.height === 0) return true;
+  }
+
+  // WebGL check (headless indicator)
+  try {
+    const canvas = document.createElement('canvas');
+    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    if (gl) {
+      const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+      if (debugInfo) {
         const vendor = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
         const renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
-        resolve(vendor === 'Google Inc. (NVIDIA)' && renderer.includes('SwiftShader'));
-      })
-    ];
-    
-    return checks.some(check => {
-      try {
-        if (check instanceof Promise) return false;
-        return check();
-      } catch(e) { return false; }
-    });
-  };
+        if (vendor === 'Google Inc. (NVIDIA)' && renderer.includes('SwiftShader')) return true;
+      }
+    }
+  } catch (e) { /* ignore */ }
+
+  return false;
+};
   
   // Run detection
   if (detectBot()) {
