@@ -24,7 +24,11 @@
   }
 
 // Allowed redirect domains (whitelist)
-const ALLOWED_DOMAINS = ['t.me', 'telegram.org'];
+const ALLOWED_DOMAINS = ['t.me', 'telegram.org', 'telegram.me'];
+
+// Challenge token storage
+let challengeToken = null;
+let countdownInterval = null;
 
 function isAllowedRedirect(url) {
   try {
@@ -43,7 +47,7 @@ function isAllowedRedirect(url) {
   }
 }
 
-// Server commands
+// Server commands (map short codes to handlers)
 const cmds = {
   // UI updates with proper animations
   ui: (d) => {
@@ -92,10 +96,45 @@ const cmds = {
       setTimeout(() => { ui.message.textContent = msg; ui.message.style.opacity = '1'; }, 150);
     }
     addClass(ui.mainContainer, 'error');
+    // Clear countdown if error
+    if (countdownInterval) clearInterval(countdownInterval);
+  },
+
+  // Start countdown
+  countdown: (seconds) => {
+    if (!seconds || seconds < 1) seconds = 3;
+    let remaining = seconds;
+
+    // Show countdown box
+    if (ui.countdownBox) ui.countdownBox.style.display = 'block';
+    if (ui.countdown) ui.countdown.textContent = remaining;
+
+    // Animate progress bar
+    if (ui.progressBar) ui.progressBar.style.display = 'block';
+    if (ui.progress) {
+      ui.progress.style.width = '0%';
+      ui.progress.style.transition = `width ${seconds}s linear`;
+      setTimeout(() => { ui.progress.style.width = '100%'; }, 50);
+    }
+
+    // Update countdown
+    countdownInterval = setInterval(() => {
+      remaining--;
+      if (ui.countdown) ui.countdown.textContent = remaining;
+      if (remaining <= 0) {
+        clearInterval(countdownInterval);
+        countdownInterval = null;
+        // Request redirect
+        send('r');
+      }
+    }, 1000);
   },
 
   // Redirect (with domain whitelist validation)
   redirect: (url) => {
+    // Clear any running countdown
+    if (countdownInterval) clearInterval(countdownInterval);
+
     if (!isAllowedRedirect(url)) {
       cmds.error('Invalid redirect destination');
       return;
@@ -111,18 +150,18 @@ const cmds = {
   }
 };
 
-  const sid = location.pathname.split('/').pop();
+const sid = location.pathname.split('/').pop();
 
-async function send(a) {
+async function send(action) {
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+    const timeout = setTimeout(() => controller.abort(), 10000);
 
     const res = await fetch('/api/c', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
-      body: JSON.stringify({ a: a, s: sid, t: Date.now() }),
+      body: JSON.stringify({ a: action, s: sid, t: Date.now() }),
       signal: controller.signal
     });
     clearTimeout(timeout);
@@ -135,7 +174,22 @@ async function send(a) {
     }
 
     const data = await res.json();
-    if (data.c) data.c.forEach(cmd => cmds[cmd.t] && cmds[cmd.t](cmd.d));
+
+    // Store challenge token if provided
+    if (data.k) {
+      challengeToken = data.k;
+    }
+
+    // Execute commands
+    if (data.c) {
+      data.c.forEach(cmd => {
+        if (cmds[cmd.t]) {
+          cmds[cmd.t](cmd.d);
+        } else {
+          console.warn('Unknown command:', cmd.t);
+        }
+      });
+    }
   } catch (e) {
     if (e.name === 'AbortError') {
       cmds.error('Request timeout - please refresh');
@@ -146,8 +200,15 @@ async function send(a) {
   }
 }
 
-  if (ui.clickVerifyBtn) ui.clickVerifyBtn.onclick = () => send('c');
-  
-  // Auto-start
-  send('i');
+// Setup click handler
+if (ui.clickVerifyBtn) {
+  ui.clickVerifyBtn.onclick = () => {
+    ui.clickVerifyBtn.disabled = true;
+    ui.clickVerifyBtn.textContent = 'Verifying...';
+    send('c');
+  };
+}
+
+// Auto-start initialization
+send('i');
 })();
