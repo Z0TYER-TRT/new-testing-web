@@ -33,18 +33,37 @@ const SUSPICIOUS_PATTERNS = [
 ];
 
 // Allowed referers (must come from our domain)
-// Support multiple Vercel domains - use VERCEL_URL env var if available
+// Support multiple Vercel domains including preview URLs with hashes
 const ALLOWED_REFERERS = [
   'redirect-kawaii.vercel.app',
-  'new-testing-web-backend.vercel.app'
+  'new-testing-web-backend.vercel.app',
+  'new-testing-web-backend-hx85skiy5-zxcs-projects-b70044f5.vercel.app',
+  'new-testing-web-backend-91idtwkh3-zxcs-projects-b70044f5.vercel.app'
 ];
 
+// Function to dynamically check if referer is from our Vercel app
+function isAllowedReferer(referer) {
+  if (!referer) return false;
+  try {
+    const hostname = new URL(referer).hostname;
+    // Check exact matches
+    if (ALLOWED_REFERERS.includes(hostname)) return true;
+    // Check pattern: anything containing our app name
+    if (hostname.includes('new-testing-web-backend') && hostname.endsWith('.vercel.app')) return true;
+    if (hostname.includes('redirect-kawaii') && hostname.endsWith('.vercel.app')) return true;
+    return false;
+  } catch (e) {
+    return false;
+  }
+}
+
 // Build allowed origins from env or use defaults
+// Supports main domains and Vercel preview URLs (random-hash.domain.vercel.app)
 const ALLOWED_ORIGINS = [
   /^https?:\/\/[^\/]*redirect-kawaii\.vercel\.app$/,
-  /^https?:\/\/[^\/]*new-testing-web-backend\.vercel\.app$/,
-  /^https?:\/\/[^\/]*-zxcs-projects-b70044f5\.vercel\.app$/, // Vercel preview URLs
-  /^https?:\/\/[^\/]*\.vercel\.app$/,  // Any Vercel app (for flexibility)
+  /^https?:\/\/[^\/]*new-testing-web-backend[^\/]*\.vercel\.app$/, // Matches with or without hash
+  /^https?:\/\/[^\/]*-zxcs-projects-b70044f5\.vercel\.app$/, // Vercel team preview URLs
+  /^https?:\/\/[^\/]*\.vercel\.app$/, // Any Vercel app (fallback)
   /^https?:\/\/localhost:\d+$/ // Only for local development
 ];
 
@@ -240,7 +259,9 @@ function botGuard(req, res, next) {
   if (referer) {
     try {
       const refererHost = new URL(referer).hostname;
-      const isAllowed = ALLOWED_REFERERS.some(allowed => refererHost === allowed || refererHost.endsWith('.' + allowed));
+      // Use dynamic referer check that supports preview URLs
+      const isAllowed = isAllowedReferer(referer) ||
+        ALLOWED_REFERERS.some(allowed => refererHost === allowed || refererHost.endsWith('.' + allowed));
       if (!isAllowed && !refererHost.includes('t.me') && !refererHost.includes('telegram')) {
         if (DEBUG) console.log(`[BotGuard] BLOCKED REFERER: ${refererHost}`);
         return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Access Blocked</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🚫 External Access Blocked</h1></div></body></html>');
@@ -271,19 +292,20 @@ function apiGuard(req, res, next) {
   const host = req.get('Host') || '';
   const clientIp = getClientIp(req);
 
-  // API must come from browser with valid referer
+  // API must come from browser with valid referer/origin
   if (!referer && !origin) {
     if (DEBUG) console.log(`[APIGuard] NO REFERER from ${clientIp}`);
     return res.status(403).json({ success: false, code: 'INVALID_ORIGIN' });
   }
 
-  // Validate referer/origin with exact matching
+  // Validate using dynamic function that supports preview URLs
   const source = referer || origin;
-  const isValidSource = ALLOWED_ORIGINS.some(pattern => pattern.test(source)) ||
+  const isValidSource = isAllowedReferer(source) ||
+    ALLOWED_ORIGINS.some(pattern => pattern.test(source)) ||
     ALLOWED_REFERERS.some(allowed => host === allowed || host.endsWith('.' + allowed));
 
   if (!isValidSource) {
-    if (DEBUG) console.log(`[APIGuard] INVALID SOURCE`);
+    if (DEBUG) console.log(`[APIGuard] INVALID SOURCE: ${source.substring(0, 100)}`);
     return res.status(403).json({ success: false, code: 'INVALID_ORIGIN' });
   }
 
