@@ -108,9 +108,10 @@ const cmds = {
     if (countdownInterval) clearInterval(countdownInterval);
   },
 
-  // Short codes for countdown and redirect
-  cd: (seconds) => cmds.countdown(seconds),
-  rd: (url) => cmds.redirect(url),
+// Short codes for countdown and redirect
+cd: (seconds) => cmds.countdown(seconds),
+rd: (url) => cmds.redirect(url),
+r: (url) => cmds.redirect(url), // Alias for redirect (used by /api/c case 'r')
 
   // Short code for error
   e: (msg) => cmds.error(msg),
@@ -119,6 +120,8 @@ const cmds = {
   countdown: (seconds) => {
     if (!seconds || seconds < 1) seconds = 3;
     let remaining = seconds;
+
+    console.log('Starting countdown:', seconds, 'seconds');
 
     // Show countdown box
     if (ui.countdownBox) ui.countdownBox.style.display = 'block';
@@ -139,29 +142,47 @@ const cmds = {
       if (remaining <= 0) {
         clearInterval(countdownInterval);
         countdownInterval = null;
+        console.log('Countdown complete, requesting redirect...');
         // Request redirect
         send('r');
       }
     }, 1000);
   },
 
-  // Redirect (with domain whitelist validation)
-  redirect: (url) => {
-    // Clear any running countdown
-    if (countdownInterval) clearInterval(countdownInterval);
+// Redirect (with domain whitelist validation for external URLs, allow internal paths)
+redirect: (url) => {
+  // Clear any running countdown
+  if (countdownInterval) clearInterval(countdownInterval);
 
-    if (!isAllowedRedirect(url)) {
-      cmds.error('Invalid redirect destination');
-      return;
+  console.log('Redirect command received, URL:', url);
+
+  // Allow internal paths (starting with /) without validation
+  if (url.startsWith('/')) {
+    console.log('Redirecting to internal path:', url);
+    window.location.href = url;
+    return;
+  }
+
+  // Validate external URLs
+  if (!isAllowedRedirect(url)) {
+    console.error('Redirect URL not allowed:', url);
+    cmds.error('Invalid redirect destination');
+    return;
+  }
+  const isAndroid = /Android/i.test(navigator.userAgent);
+  if (isAndroid) {
+    try {
+      console.log('Android detected, using intent URL');
+      window.location.href = 'intent://' + url.replace(/^https?:\/\//, '') +
+      '#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=' +
+      encodeURIComponent(url) + ';end';
+    } catch (e) {
+      console.error('Intent URL failed, falling back to direct redirect:', e);
+      window.location.href = url;
     }
-    const isAndroid = /Android/i.test(navigator.userAgent);
-    if (isAndroid) {
-      try {
-        window.location.href = 'intent://' + url.replace(/^https?:\/\//, '') +
-          '#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=' +
-          encodeURIComponent(url) + ';end';
-      } catch (e) { window.location.href = url; }
-    } else { window.location.href = url; }
+  } else {
+    console.log('Redirecting to:', url);
+    window.location.href = url;
   }
 };
 
@@ -195,16 +216,18 @@ async function send(action) {
       challengeToken = data.k;
     }
 
-    // Execute commands
-    if (data.c) {
-      data.c.forEach(cmd => {
-        if (cmds[cmd.t]) {
-          cmds[cmd.t](cmd.d);
-        } else {
-          console.warn('Unknown command:', cmd.t);
-        }
-      });
+// Execute commands
+if (data.c) {
+  console.log('Executing commands:', data.c);
+  data.c.forEach(cmd => {
+    console.log('Command:', cmd.t, 'Data:', cmd.d);
+    if (cmds[cmd.t]) {
+      cmds[cmd.t](cmd.d);
+    } else {
+      console.warn('Unknown command:', cmd.t);
     }
+  });
+}
   } catch (e) {
     if (e.name === 'AbortError') {
       cmds.error('Request timeout - please refresh');
