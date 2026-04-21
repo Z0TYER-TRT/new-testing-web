@@ -769,36 +769,37 @@ if (!isDebug) {
       return false;
     }
   }, true);
-}
-    
-    // Detect DevTools open
-    const threshold = 160;
-    const checkDevTools = () => {
-      const widthThreshold = window.outerWidth - window.innerWidth > threshold;
-      const heightThreshold = window.outerHeight - window.innerHeight > threshold;
-      if (widthThreshold || heightThreshold) {
-        document.body.innerHTML = '<div style="display:flex;justify-content:center;align-items:center;height:100vh;background:#1a1a2e;color:#fff;font-family:sans-serif;"><h1>🛡️ Developer Tools Blocked</h1></div>';
-        setTimeout(() => window.location.href = '/blocked', 100);
-      }
-    };
-    
-    // Check periodically
-    setInterval(checkDevTools, 500);
-    
-    // Disable console
-    const noop = () => {};
-    ['log', 'debug', 'info', 'warn', 'error', 'table', 'trace'].forEach(method => {
-      console[method] = noop;
-    });
-    
-    // Disable debugger
-    setInterval(() => {
-      Function.prototype.constructor = noop;
-      debugger;
-    }, 100);
+
+  // Detect DevTools open
+  const threshold = 160;
+  const checkDevTools = () => {
+    const widthThreshold = window.outerWidth - window.innerWidth > threshold;
+    const heightThreshold = window.outerHeight - window.innerHeight > threshold;
+    if (widthThreshold || heightThreshold) {
+      document.body.innerHTML = '<div style="display:flex;justify-content:center;align-items:center;height:100vh;background:#1a1a2e;color:#fff;font-family:sans-serif;"><h1>🛡️ Developer Tools Blocked</h1></div>';
+      setTimeout(() => window.location.href = '/blocked', 100);
+    }
   };
-  
-  blockDevTools();
+
+  // Check periodically
+  setInterval(checkDevTools, 500);
+
+  // Disable console
+  const noop = () => {};
+  ['log', 'debug', 'info', 'warn', 'error', 'table', 'trace'].forEach(method => {
+    console[method] = noop;
+  });
+
+// Disable debugger (only if not in debug mode)
+if (!isDebug) {
+  setInterval(() => {
+    Function.prototype.constructor = noop;
+    debugger;
+  }, 100);
+}
+};
+
+blockDevTools();
   
   // Verify page integrity
   const verifyIntegrity = () => {
