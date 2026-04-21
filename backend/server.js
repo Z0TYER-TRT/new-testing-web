@@ -742,28 +742,34 @@ const detectBot = () => {
   
   // Prevent DevTools
   const blockDevTools = () => {
-    // Block right-click
-    document.addEventListener('contextmenu', (e) => { 
-      e.preventDefault(); 
-      return false; 
-    }, true);
-    
-    // Block keyboard shortcuts
-    document.addEventListener('keydown', (e) => {
-      const blocked = [
-        e.key === 'F12',
-        e.ctrlKey && ['u', 's', 'i', 'j', 'c', 'p', 'h', 'a'].includes(e.key.toLowerCase()),
-        e.ctrlKey && e.shiftKey && ['i', 'j', 'c'].includes(e.key.toLowerCase()),
-        e.metaKey && ['u', 's', 'i', 'j', 'c'].includes(e.key.toLowerCase()),
-        e.key === 'F5' && e.ctrlKey,
-        e.key === 'r' && e.ctrlKey
-      ];
-      if (blocked.some(Boolean)) {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-      }
-    }, true);
+// Check if debug mode is enabled via URL parameter
+const isDebug = new URLSearchParams(window.location.search).get('debug') === 'true';
+
+// Skip devtools blocking if debug mode is enabled
+if (!isDebug) {
+  // Block right-click
+  document.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    return false;
+  }, true);
+
+  // Block keyboard shortcuts
+  document.addEventListener('keydown', (e) => {
+    const blocked = [
+      e.key === 'F12',
+      e.ctrlKey && ['u', 's', 'i', 'j', 'c', 'p', 'h', 'a'].includes(e.key.toLowerCase()),
+      e.ctrlKey && e.shiftKey && ['i', 'j', 'c'].includes(e.key.toLowerCase()),
+      e.metaKey && ['u', 's', 'i', 'j', 'c'].includes(e.key.toLowerCase()),
+      e.key === 'F5' && e.ctrlKey,
+      e.key === 'r' && e.ctrlKey
+    ];
+    if (blocked.some(Boolean)) {
+      e.preventDefault();
+      e.stopPropagation();
+      return false;
+    }
+  }, true);
+}
     
     // Detect DevTools open
     const threshold = 160;
@@ -1432,64 +1438,75 @@ app.post('/api/c', rateLimiter, apiGuard, async (req, res) => {
             break;
         }
 
-      case 'c': { // click
-        const clientSession = clientSessions.get(clientIp + '_' + session_id);
-        if (!clientSession || !clientSession.challengeToken) {
-          return res.json({ success: false, c: [{ t: 'e', d: 'Session expired' }] });
+case 'c': { // click
+  if (DEBUG) console.log(`[Click] Processing click for session: ${session_id}`);
+  if (DEBUG) console.log(`[Click] Client sessions:`, Array.from(clientSessions.keys()));
+  if (DEBUG) console.log(`[Click] Looking for key: ${clientIp + '_' + session_id}`);
+  
+  const clientSession = clientSessions.get(clientIp + '_' + session_id);
+  if (!clientSession || !clientSession.challengeToken) {
+    if (DEBUG) console.log(`[Click] Session not found or expired`);
+    return res.json({ success: false, c: [{ t: 'e', d: 'Session expired' }] });
+  }
+
+  const tokenData = redirectTokens.get(clientSession.challengeToken);
+  if (!tokenData) {
+    if (DEBUG) console.log(`[Click] Token not found`);
+    return res.json({ success: false, c: [{ t: 'e', d: 'Invalid token' }] });
+  }
+
+  if (Date.now() > tokenData.expiresAt) {
+    if (DEBUG) console.log(`[Click] Token expired`);
+    redirectTokens.delete(clientSession.challengeToken);
+    return res.json({ success: false, c: [{ t: 'e', d: 'Token expired' }] });
+  }
+
+  // Mark as clicked
+  clientSession.clicked = true;
+  clientSession.clickTime = Date.now();
+  tokenData.verifiedAt = Date.now();
+  tokenData.isChallenge = false;
+
+  if (DEBUG) console.log(`[Click] Click verified, updating database...`);
+
+  // Update database
+  try {
+    const shardIndex = getShardIndex(session_id);
+    const collection = await getDatabase(shardIndex);
+    await collection.updateOne(
+      { session_id: session_id },
+      {
+        $set: {
+          click_verified: true,
+          click_time: new Date(),
+          click_ip: clientIp
         }
-
-        const tokenData = redirectTokens.get(clientSession.challengeToken);
-        if (!tokenData) {
-          return res.json({ success: false, c: [{ t: 'e', d: 'Invalid token' }] });
-        }
-
-        if (Date.now() > tokenData.expiresAt) {
-          redirectTokens.delete(clientSession.challengeToken);
-          return res.json({ success: false, c: [{ t: 'e', d: 'Token expired' }] });
-        }
-
-        // Mark as clicked
-        clientSession.clicked = true;
-        clientSession.clickTime = Date.now();
-        tokenData.verifiedAt = Date.now();
-        tokenData.isChallenge = false;
-
-        // Update database
-        try {
-          const shardIndex = getShardIndex(session_id);
-          const collection = await getDatabase(shardIndex);
-          await collection.updateOne(
-            { session_id: session_id },
-            {
-              $set: {
-                click_verified: true,
-                click_time: new Date(),
-                click_ip: clientIp
-              }
-            }
-          );
-        } catch (err) {
-          console.error('[c] Update error:', err.message);
-        }
-
-      // Return countdown sequence with countdown command
-      return res.json({
-        success: true,
-        c: [
-          { t: 'ui', d: { id: 'clickVerifyBtn', styles: { disabled: true }, text: '✓ Verified' } },
-          { t: 'ui', d: { id: 'shieldWrapper', display: 'none' } },
-          { t: 'ui', d: { id: 'loaderWrapper', display: 'none' } },
-          { t: 'ui', d: { id: 'checkMark', class: 'show', display: 'flex' } },
-          { t: 'ui', d: { id: 'title', text: '✅ Access Granted' } },
-          { t: 'ui', d: { id: 'message', text: 'Redirecting...' } },
-          { t: 'ui', d: { id: 'countdownBox', display: 'block' } },
-          { t: 'ui', d: { id: 'progressBar', display: 'block' } },
-          { t: 'ui', d: { id: 'progress', styles: { transition: 'width 3s linear', width: '100%' } } },
-          { t: 'cd', d: 3 }
-        ]
-      });
-      break;
       }
+    );
+    if (DEBUG) console.log(`[Click] Database updated successfully`);
+  } catch (err) {
+    console.error('[c] Update error:', err.message);
+  }
+
+  // Return countdown sequence with countdown command
+  if (DEBUG) console.log(`[Click] Returning success response with countdown`);
+  return res.json({
+    success: true,
+    c: [
+      { t: 'ui', d: { id: 'clickVerifyBtn', styles: { disabled: true }, text: '✓ Verified' } },
+      { t: 'ui', d: { id: 'shieldWrapper', display: 'none' } },
+      { t: 'ui', d: { id: 'loaderWrapper', display: 'none' } },
+      { t: 'ui', d: { id: 'checkMark', class: 'show', display: 'flex' } },
+      { t: 'ui', d: { id: 'title', text: '✅ Access Granted' } },
+      { t: 'ui', d: { id: 'message', text: 'Redirecting...' } },
+      { t: 'ui', d: { id: 'countdownBox', display: 'block' } },
+      { t: 'ui', d: { id: 'progressBar', display: 'block' } },
+      { t: 'ui', d: { id: 'progress', styles: { transition: 'width 3s linear', width: '100%' } } },
+      { t: 'cd', d: 3 }
+    ]
+  });
+  break;
+}
 
       case 'r': { // redirect
         const clientSession = clientSessions.get(clientIp + '_' + session_id);
