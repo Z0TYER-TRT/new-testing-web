@@ -275,13 +275,13 @@ if (data.c) {
 }
 
 // Setup click handler
-console.log('DOM Content loaded, checking button...');
-console.log('UI elements:', Object.keys(ui));
-console.log('Button element:', ui.clickVerifyBtn);
-console.log('Button HTML:', ui.clickVerifyBtn ? ui.clickVerifyBtn.outerHTML : 'N/A');
+window.debugLog('DOM Content loaded, checking button...');
+window.debugLog('UI elements:', Object.keys(ui));
+window.debugLog('Button element:', ui.clickVerifyBtn);
+window.debugLog('Button HTML:', ui.clickVerifyBtn ? ui.clickVerifyBtn.outerHTML : 'N/A');
 
 if (ui.clickVerifyBtn) {
-  console.log('Click button found, attaching handler');
+  window.debugLog('Click button found, attaching handler');
   
   // Ensure button is visible initially
   ui.clickVerifyBtn.style.display = 'inline-block';
@@ -293,12 +293,12 @@ if (ui.clickVerifyBtn) {
   ui.clickVerifyBtn.addEventListener('click', function(e) {
     e.preventDefault();
     e.stopPropagation();
-    console.log('Button clicked! Event:', e);
-    console.log('Button state:', { disabled: this.disabled, tagName: this.tagName, className: this.className });
+    window.debugLog('Button clicked! Event:', e);
+    window.debugLog('Button state:', { disabled: this.disabled, tagName: this.tagName, className: this.className });
     
     // Prevent multiple clicks
     if (this.disabled) {
-      console.log('Button already clicked, ignoring');
+      window.debugLog('Button already clicked, ignoring');
       return;
     }
     
@@ -312,16 +312,43 @@ if (ui.clickVerifyBtn) {
       ui.statusMessage.textContent = 'Verifying your click...';
     }
     
-    console.log('Sending click verification...');
+    window.debugLog('Sending click verification...');
     send('c');
   }, { once: false, capture: true });
 } else {
-  console.error('Click button NOT found in DOM!');
-  console.log('All elements in DOM:', document.querySelectorAll('*').length);
-  console.log('Buttons in DOM:', document.querySelectorAll('button').length);
+  window.debugLog('Click button NOT found in DOM!');
+  window.debugLog('All elements in DOM:', document.querySelectorAll('*').length);
+  window.debugLog('Buttons in DOM:', document.querySelectorAll('button').length);
 }
 
-// Auto-start initialization
-console.log('Starting initialization...');
+// Create debug overlay (visible even without dev tools)
+function createDebugOverlay() {
+  const overlay = document.createElement('div');
+  overlay.id = 'debug-overlay';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:150px;background:rgba(0,0,0,0.8);color:#0f0;font-family:monospace;font-size:12px;padding:10px;overflow-y:auto;z-index:999999;display:none;';
+  overlay.innerHTML = '<div style="position:sticky;top:0;background:#000;padding:5px;font-weight:bold;">DEBUG LOG (click to close) ▼</div><div id="debug-logs"></div>';
+  overlay.onclick = function() { this.style.display = 'none'; };
+  document.body.appendChild(overlay);
+  
+  // Store reference
+  window.debugOverlay = overlay;
+  window.debugLogs = document.getElementById('debug-logs');
+  
+  // Override console.log to also show in overlay
+  const originalLog = console.log;
+  window.debugLog = function(msg) {
+    originalLog.call(console, msg);
+    if (window.debugLogs) {
+      const line = document.createElement('div');
+      line.textContent = '> ' + msg;
+      window.debugLogs.appendChild(line);
+      window.debugLogs.scrollTop = window.debugLogs.scrollHeight;
+    }
+  };
+}
+
+// Create overlay and start initialization
+createDebugOverlay();
+window.debugLog('Starting initialization...');
 send('i');
 })();
