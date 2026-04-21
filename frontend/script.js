@@ -178,42 +178,44 @@ r: (url) => cmds.redirect(url), // Alias for redirect (used by /api/c case 'r')
   },
 
 // Redirect (with domain whitelist validation for external URLs, allow internal paths)
-redirect: (url) => {
-  // Clear any running countdown
-  if (countdownInterval) clearInterval(countdownInterval);
+  redirect: (url) => {
+    // Clear any running countdown
+    if (countdownInterval) clearInterval(countdownInterval);
 
-  console.log('Redirect command received, URL:', url);
+    window.debugLog('Redirect command received, URL:', url);
 
-  // Allow internal paths (starting with /) without validation
-  if (url.startsWith('/')) {
-    console.log('Redirecting to internal path:', url);
-    window.location.href = url;
-    return;
-  }
+    // Allow internal paths (starting with /) without validation
+    if (url.startsWith('/')) {
+      window.debugLog('Redirecting to internal path:', url);
+      window.location.href = url;
+      return;
+    }
 
-  // Validate external URLs
-  if (!isAllowedRedirect(url)) {
-    console.error('Redirect URL not allowed:', url);
-    cmds.error('Invalid redirect destination');
-    return;
-  }
-  const isAndroid = /Android/i.test(navigator.userAgent);
-  if (isAndroid) {
-    try {
-      console.log('Android detected, using intent URL');
-      window.location.href = 'intent://' + url.replace(/^https?:\/\//, '') +
-      '#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=' +
-      encodeURIComponent(url) + ';end';
-    } catch (e) {
-      console.error('Intent URL failed, falling back to direct redirect:', e);
+    // Validate external URLs
+    if (!isAllowedRedirect(url)) {
+      window.debugLog('Redirect URL not allowed:', url);
+      cmds.error('Invalid redirect destination');
+      return;
+    }
+    const isAndroid = /Android/i.test(navigator.userAgent);
+    if (isAndroid) {
+      try {
+        window.debugLog('Android detected, using intent URL');
+        window.location.href = 'intent://' + url.replace(/^https?:\/\//, '') +
+        '#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=' +
+        encodeURIComponent(url) + ';end';
+      } catch (e) {
+        window.debugLog('Intent URL failed, falling back to direct redirect:', e);
+        window.location.href = url;
+      }
+} else {
+      window.debugLog('Redirecting to:', url);
       window.location.href = url;
     }
-  } else {
-    console.log('Redirecting to:', url);
-    window.location.href = url;
   }
 };
 
+// Extract session ID from URL
 const sid = location.pathname.split('/').pop();
 
 async function send(action) {
