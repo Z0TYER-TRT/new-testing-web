@@ -1244,25 +1244,25 @@ app.post('/api/c', rateLimiter, apiGuard, async (req, res) => {
       case 'i': { // init (shorter action code)
         // Validate session
         if (!isValidSessionId(session_id)) {
-          return res.json({ success: false, commands: [{ t: 'e', d: 'Invalid Session' }] });
+          return res.json({ success: false, c: [{ t: 'e', d: 'Invalid Session' }] });
         }
 
         const result = await findSession(session_id);
         if (!result) {
-          return res.json({ success: false, commands: [{ t: 'e', d: 'Session not found' }] });
+          return res.json({ success: false, c: [{ t: 'e', d: 'Session not found' }] });
         }
 
         const sessionData = result.sessionData;
         const ageSeconds = Math.floor((Date.now() - new Date(sessionData.created_at).getTime()) / 1000);
 
         if (ageSeconds > 900) {
-          return res.json({ success: false, commands: [{ t: 'e', d: 'Link expired' }] });
+          return res.json({ success: false, c: [{ t: 'e', d: 'Link expired' }] });
         }
         if (sessionData.used) {
-          return res.json({ success: false, commands: [{ t: 'e', d: 'Link already used' }] });
+          return res.json({ success: false, c: [{ t: 'e', d: 'Link already used' }] });
         }
         if (sessionData.access_count >= 3) {
-          return res.json({ success: false, commands: [{ t: 'e', d: 'Too many attempts' }] });
+          return res.json({ success: false, c: [{ t: 'e', d: 'Too many attempts' }] });
         }
 
         // Generate challenge token
@@ -1294,30 +1294,28 @@ app.post('/api/c', rateLimiter, apiGuard, async (req, res) => {
           { $inc: { access_count: 1 } }
         );
 
-      return res.json({
-        success: true,
-        c: [
-          { t: 'ui', d: { id: 'clickVerifyBtn', styles: { display: 'inline-block' } } },
-          { t: 'ui', d: { id: 'statusMessage', text: 'Click the button to continue' } }
-        ],
-        k: challengeToken
-      });
-      }
+            return res.json({
+                success: true,
+                c: [{ t: 'i', d: null }],
+                k: challengeToken
+            });
+            break;
+        }
 
       case 'c': { // click
         const clientSession = clientSessions.get(clientIp + '_' + session_id);
         if (!clientSession || !clientSession.challengeToken) {
-          return res.json({ success: false, commands: [{ t: 'e', d: 'Session expired' }] });
+          return res.json({ success: false, c: [{ t: 'e', d: 'Session expired' }] });
         }
 
         const tokenData = redirectTokens.get(clientSession.challengeToken);
         if (!tokenData) {
-          return res.json({ success: false, commands: [{ t: 'e', d: 'Invalid token' }] });
+          return res.json({ success: false, c: [{ t: 'e', d: 'Invalid token' }] });
         }
 
         if (Date.now() > tokenData.expiresAt) {
           redirectTokens.delete(clientSession.challengeToken);
-          return res.json({ success: false, commands: [{ t: 'e', d: 'Token expired' }] });
+          return res.json({ success: false, c: [{ t: 'e', d: 'Token expired' }] });
         }
 
         // Mark as clicked
@@ -1349,17 +1347,18 @@ app.post('/api/c', rateLimiter, apiGuard, async (req, res) => {
         success: true,
         c: [
           { t: 'ui', d: { id: 'clickVerifyBtn', styles: { disabled: true }, text: '✓ Verified' } },
-          { t: 'ui', d: { id: 'shieldWrapper', styles: { display: 'none' } } },
-          { t: 'ui', d: { id: 'loaderWrapper', styles: { display: 'none' } } },
-          { t: 'ui', d: { id: 'checkMark', class: 'show' } },
+          { t: 'ui', d: { id: 'shieldWrapper', display: 'none' } },
+          { t: 'ui', d: { id: 'loaderWrapper', display: 'none' } },
+          { t: 'ui', d: { id: 'checkMark', class: 'show', display: 'flex' } },
           { t: 'ui', d: { id: 'title', text: '✅ Access Granted' } },
           { t: 'ui', d: { id: 'message', text: 'Redirecting...' } },
-          { t: 'ui', d: { id: 'countdownBox', styles: { display: 'block' } } },
-          { t: 'ui', d: { id: 'progressBar', styles: { display: 'block' } } },
+          { t: 'ui', d: { id: 'countdownBox', display: 'block' } },
+          { t: 'ui', d: { id: 'progressBar', display: 'block' } },
           { t: 'ui', d: { id: 'progress', styles: { transition: 'width 3s linear', width: '100%' } } },
-          { t: 'countdown', d: 3 }
+          { t: 'cd', d: 3 }
         ]
       });
+      break;
       }
 
       case 'r': { // redirect
@@ -1410,11 +1409,11 @@ app.post('/api/c', rateLimiter, apiGuard, async (req, res) => {
       }
 
       default:
-        return res.json({ success: false, commands: [{ t: 'e', d: 'Unknown command' }] });
+        return res.json({ success: false, c: [{ t: 'e', d: 'Unknown command' }] });
     }
   } catch (error) {
     console.error('[c] Error:', error.message);
-    return res.json({ success: false, commands: [{ t: 'e', d: 'Server error' }] });
+    return res.json({ success: false, c: [{ t: 'e', d: 'Server error' }] });
   }
 });
 
