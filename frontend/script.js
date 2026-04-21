@@ -275,11 +275,26 @@ if (data.c) {
 }
 
 // Setup click handler
+console.log('DOM Content loaded, checking button...');
+console.log('UI elements:', Object.keys(ui));
+console.log('Button element:', ui.clickVerifyBtn);
+console.log('Button HTML:', ui.clickVerifyBtn ? ui.clickVerifyBtn.outerHTML : 'N/A');
+
 if (ui.clickVerifyBtn) {
   console.log('Click button found, attaching handler');
+  
+  // Ensure button is visible initially
+  ui.clickVerifyBtn.style.display = 'inline-block';
+  ui.clickVerifyBtn.style.opacity = '1';
+  ui.clickVerifyBtn.style.visibility = 'visible';
+  ui.clickVerifyBtn.style.pointerEvents = 'auto';
+  ui.clickVerifyBtn.style.cursor = 'pointer';
+  
   ui.clickVerifyBtn.addEventListener('click', function(e) {
     e.preventDefault();
-    console.log('Button clicked!');
+    e.stopPropagation();
+    console.log('Button clicked! Event:', e);
+    console.log('Button state:', { disabled: this.disabled, tagName: this.tagName, className: this.className });
     
     // Prevent multiple clicks
     if (this.disabled) {
@@ -290,6 +305,7 @@ if (ui.clickVerifyBtn) {
     this.disabled = true;
     this.textContent = 'Verifying...';
     this.style.cursor = 'wait';
+    this.style.opacity = '0.7';
     
     // Update status message
     if (ui.statusMessage) {
@@ -298,14 +314,11 @@ if (ui.clickVerifyBtn) {
     
     console.log('Sending click verification...');
     send('c');
-  });
-  
-  // Make sure button is visible
-  ui.clickVerifyBtn.style.display = 'inline-block';
-  ui.clickVerifyBtn.style.opacity = '1';
-  ui.clickVerifyBtn.style.pointerEvents = 'auto';
+  }, { once: false, capture: true });
 } else {
-  console.error('Click button not found!');
+  console.error('Click button NOT found in DOM!');
+  console.log('All elements in DOM:', document.querySelectorAll('*').length);
+  console.log('Buttons in DOM:', document.querySelectorAll('button').length);
 }
 
 // Auto-start initialization
