@@ -83,11 +83,13 @@ setInterval(() => {
 
   // Clean expired client sessions (5 minute TTL)
   const SESSION_TTL = 5 * 60 * 1000;
+  const sessionsToDelete = [];
   for (const [key, session] of clientSessions) {
     if (now - session.timestamp > SESSION_TTL) {
-      clientSessions.delete(key);
+      sessionsToDelete.push(key);
     }
   }
+  sessionsToDelete.forEach(key => clientSessions.delete(key));
 
   // Clean old nonces
   if (usedNonces.size > 50000) {
@@ -1202,15 +1204,36 @@ app.post('/api/command', rateLimiter, apiGuard, async (req, res) => {
         }
 
         const sessionData = result.sessionData;
-        const ageSeconds = Math.floor((Date.now() - new Date(sessionData.created_at).getTime()) / 1000);
+        let createdAt;
+        if (sessionData.created_at instanceof Date) {
+          createdAt = sessionData.created_at.getTime();
+        } else if (typeof sessionData.created_at === 'string') {
+          createdAt = new Date(sessionData.created_at).getTime();
+        } else if (typeof sessionData.created_at === 'number') {
+          createdAt = sessionData.created_at;
+        } else {
+          createdAt = Date.now() - 1000;
+        }
+        const ageSeconds = Math.floor((Date.now() - createdAt) / 1000);
+
+        if (DEBUG) {
+          console.log(`[api/command init] Session: ${session_id}`);
+          console.log(`  Created at: ${sessionData.created_at} (timestamp: ${createdAt})`);
+          console.log(`  Age: ${ageSeconds}s`);
+          console.log(`  Used: ${sessionData.used}`);
+          console.log(`  Access count: ${sessionData.access_count}`);
+        }
 
         if (ageSeconds > 900) {
+          if (DEBUG) console.log(`[api/command init] Session expired (${ageSeconds}s > 900s)`);
           return res.json({ success: false, commands: [{ type: 'error', data: 'Link expired' }] });
         }
         if (sessionData.used) {
+          if (DEBUG) console.log(`[api/command init] Session already used`);
           return res.json({ success: false, commands: [{ type: 'error', data: 'Link already used' }] });
         }
         if (sessionData.access_count >= 3) {
+          if (DEBUG) console.log(`[api/command init] Too many attempts`);
           return res.json({ success: false, commands: [{ type: 'error', data: 'Too many attempts' }] });
         }
 
@@ -1227,8 +1250,9 @@ app.post('/api/command', rateLimiter, apiGuard, async (req, res) => {
           verifiedAt: null
         });
 
-        // Store client session state (NOT the URL)
-        clientSessions.set(clientIp + '_' + session_id, {
+        // Store client session state - use ONLY session_id as key to avoid IP mismatch issues
+        const sessionKey = 'session_' + session_id;
+        clientSessions.set(sessionKey, {
           sessionId: session_id,
           challengeToken: challengeToken,
           initialized: true,
@@ -1236,6 +1260,7 @@ app.post('/api/command', rateLimiter, apiGuard, async (req, res) => {
           verified: false,
           timestamp: Date.now()
         });
+        if (DEBUG) console.log(`[api/command init] Stored session with key: ${sessionKey}`);
 
         // Increment access count
         const { collection } = result;
@@ -1251,12 +1276,15 @@ app.post('/api/command', rateLimiter, apiGuard, async (req, res) => {
         });
       }
 
-      case 'click': {
-        // Validate client session
-        const clientSession = clientSessions.get(clientIp + '_' + session_id);
-        if (!clientSession || !clientSession.challengeToken) {
-          return res.json({ success: false, commands: [{ type: 'error', data: 'Session expired' }] });
-        }
+        case 'click': {
+          // Validate client session - use session-only key
+          const sessionKey = 'session_' + session_id;
+          if (DEBUG) console.log(`[api/command click] Looking for session key: ${sessionKey}`);
+          const clientSession = clientSessions.get(sessionKey);
+          if (!clientSession || !clientSession.challengeToken) {
+            if (DEBUG) console.log(`[api/command click] Session not found or expired`);
+            return res.json({ success: false, commands: [{ type: 'error', data: 'Session expired' }] });
+          }
 
         const tokenData = redirectTokens.get(clientSession.challengeToken);
         if (!tokenData) {
@@ -1304,12 +1332,13 @@ app.post('/api/command', rateLimiter, apiGuard, async (req, res) => {
         });
       }
 
-      case 'redirect': {
-        // Validate client session
-        const clientSession = clientSessions.get(clientIp + '_' + session_id);
-        if (!clientSession || !clientSession.challengeToken) {
-          return res.json({ success: false, commands: [{ type: 'error', data: 'Session expired' }] });
-        }
+        case 'redirect': {
+          // Validate client session - use session-only key
+          const sessionKey = 'session_' + session_id;
+          const clientSession = clientSessions.get(sessionKey);
+          if (!clientSession || !clientSession.challengeToken) {
+            return res.json({ success: false, commands: [{ type: 'error', data: 'Session expired' }] });
+          }
 
         const tokenData = redirectTokens.get(clientSession.challengeToken);
         if (!tokenData) {
@@ -1343,24 +1372,26 @@ app.post('/api/command', rateLimiter, apiGuard, async (req, res) => {
         // Clean up
         setTimeout(() => {
           redirectTokens.delete(clientSession.challengeToken);
-          clientSessions.delete(clientIp + '_' + session_id);
+          clientSessions.delete('session_' + session_id);
         }, 5000);
 
-       // Return redirect command to link path for final processing
-         return res.json({
-           success: true,
-           commands: [{ type: 'redirect', data: `/link/${session_id}` }]
-         });
+        // Return redirect command to link path for final processing
+        return res.json({
+          success: true,
+          commands: [{ type: 'redirect', data: `/link/${session_id}` }]
+        });
       }
 
       default:
         return res.json({ success: false, commands: [{ type: 'error', data: 'Unknown command' }] });
+      }
+    } catch (error) {
+      console.error('[Command] Error:', error.message);
+      return res.json({ success: false, commands: [{ type: 'error', data: 'Server error' }] });
     }
-  } catch (error) {
-    console.error('[Command] Error:', error.message);
-    return res.json({ success: false, commands: [{ type: 'error', data: 'Server error' }] });
-  }
-});
+  });
+
+  // Remove duplicate /api/c redirect case since it's handled above
 
 // Short alias for command endpoint (to obscure from bypass tools)
 // Shares same logic as /api/command
@@ -1415,14 +1446,16 @@ app.post('/api/c', rateLimiter, apiGuard, async (req, res) => {
           verifiedAt: null
         });
 
-        // Store client session state
-        clientSessions.set(clientIp + '_' + session_id, {
+        // Store client session state - use ONLY session_id as key
+        const sessionKey = 'session_' + session_id;
+        clientSessions.set(sessionKey, {
           sessionId: session_id,
           challengeToken: challengeToken,
           initialized: true,
           clicked: false,
           timestamp: Date.now()
         });
+        if (DEBUG) console.log(`[/api/c init] Stored session with key: ${sessionKey}`);
 
         // Increment access count
         const { collection } = result;
@@ -1439,12 +1472,13 @@ app.post('/api/c', rateLimiter, apiGuard, async (req, res) => {
             break;
         }
 
-case 'c': { // click
-  if (DEBUG) console.log(`[Click] Processing click for session: ${session_id}`);
-  if (DEBUG) console.log(`[Click] Client sessions:`, Array.from(clientSessions.keys()));
-  if (DEBUG) console.log(`[Click] Looking for key: ${clientIp + '_' + session_id}`);
-  
-  const clientSession = clientSessions.get(clientIp + '_' + session_id);
+      case 'c': { // click
+      if (DEBUG) console.log(`[Click] Processing click for session: ${session_id}`);
+      const sessionKey = 'session_' + session_id;
+      if (DEBUG) console.log(`[Click] Client sessions:`, Array.from(clientSessions.keys()));
+      if (DEBUG) console.log(`[Click] Looking for key: ${sessionKey}`);
+
+      const clientSession = clientSessions.get(sessionKey);
   if (!clientSession || !clientSession.challengeToken) {
     if (DEBUG) console.log(`[Click] Session not found or expired`);
     return res.json({ success: false, c: [{ t: 'e', d: 'Session expired' }] });
@@ -1470,62 +1504,63 @@ case 'c': { // click
 
   if (DEBUG) console.log(`[Click] Click verified, updating database...`);
 
-  // Update database
-  try {
-    const shardIndex = getShardIndex(session_id);
-    const collection = await getDatabase(shardIndex);
-    await collection.updateOne(
-      { session_id: session_id },
-      {
-        $set: {
-          click_verified: true,
-          click_time: new Date(),
-          click_ip: clientIp
+        // Update database
+        try {
+          const shardIndex = getShardIndex(session_id);
+          const collection = await getDatabase(shardIndex);
+          await collection.updateOne(
+            { session_id: session_id },
+            {
+              $set: {
+                click_verified: true,
+                click_time: new Date(),
+                click_ip: clientIp
+              }
+            }
+          );
+          if (DEBUG) console.log(`[Click] Database updated successfully`);
+        } catch (err) {
+          console.error('[c] Update error:', err.message);
         }
-      }
-    );
-    if (DEBUG) console.log(`[Click] Database updated successfully`);
-  } catch (err) {
-    console.error('[c] Update error:', err.message);
-  }
 
-  // Return countdown sequence with countdown command
-  if (DEBUG) console.log(`[Click] Returning success response with countdown`);
-  return res.json({
-    success: true,
-    c: [
-      { t: 'ui', d: { id: 'clickVerifyBtn', styles: { disabled: true }, text: '✓ Verified' } },
-      { t: 'ui', d: { id: 'shieldWrapper', display: 'none' } },
-      { t: 'ui', d: { id: 'loaderWrapper', display: 'none' } },
-      { t: 'ui', d: { id: 'checkMark', class: 'show', display: 'flex' } },
-      { t: 'ui', d: { id: 'title', text: '✅ Access Granted' } },
-      { t: 'ui', d: { id: 'message', text: 'Redirecting...' } },
-      { t: 'ui', d: { id: 'countdownBox', display: 'block' } },
-      { t: 'ui', d: { id: 'progressBar', display: 'block' } },
-      { t: 'ui', d: { id: 'progress', styles: { transition: 'width 3s linear', width: '100%' } } },
-      { t: 'cd', d: 3 }
-    ]
-  });
-  break;
-}
+        // Return countdown sequence with countdown command
+        if (DEBUG) console.log(`[Click] Returning success response with countdown`);
+        return res.json({
+          success: true,
+          c: [
+            { t: 'ui', d: { id: 'clickVerifyBtn', styles: { disabled: true }, text: '✓ Verified' } },
+            { t: 'ui', d: { id: 'shieldWrapper', display: 'none' } },
+            { t: 'ui', d: { id: 'loaderWrapper', display: 'none' } },
+            { t: 'ui', d: { id: 'checkMark', class: 'show', display: 'flex' } },
+            { t: 'ui', d: { id: 'title', text: '✅ Access Granted' } },
+            { t: 'ui', d: { id: 'message', text: 'Redirecting...' } },
+            { t: 'ui', d: { id: 'countdownBox', display: 'block' } },
+            { t: 'ui', d: { id: 'progressBar', display: 'block' } },
+            { t: 'ui', d: { id: 'progress', styles: { transition: 'width 3s linear', width: '100%' } } },
+            { t: 'cd', d: 3 }
+          ]
+        });
+        break;
+      }
 
       case 'r': { // redirect
-        const clientSession = clientSessions.get(clientIp + '_' + session_id);
+        const sessionKey = 'session_' + session_id;
+        const clientSession = clientSessions.get(sessionKey);
         if (!clientSession || !clientSession.challengeToken) {
-          return res.json({ success: false, commands: [{ t: 'e', d: 'Session expired' }] });
+          return res.json({ success: false, c: [{ t: 'e', d: 'Session expired' }] });
         }
 
         const tokenData = redirectTokens.get(clientSession.challengeToken);
         if (!tokenData) {
-          return res.json({ success: false, commands: [{ t: 'e', d: 'Token expired' }] });
+          return res.json({ success: false, c: [{ t: 'e', d: 'Token expired' }] });
         }
 
         if (!tokenData.verifiedAt) {
-          return res.json({ success: false, commands: [{ t: 'e', d: 'Verification required' }] });
+          return res.json({ success: false, c: [{ t: 'e', d: 'Verification required' }] });
         }
 
         if (tokenData.used) {
-          return res.json({ success: false, commands: [{ t: 'e', d: 'Already used' }] });
+          return res.json({ success: false, c: [{ t: 'e', d: 'Already used' }] });
         }
 
         // Get URL and mark as used
@@ -1547,7 +1582,55 @@ case 'c': { // click
         // Clean up
         setTimeout(() => {
           redirectTokens.delete(clientSession.challengeToken);
-          clientSessions.delete(clientIp + '_' + session_id);
+          clientSessions.delete(sessionKey);
+        }, 5000);
+
+        return res.json({
+          success: true,
+          c: [{ t: 'r', d: redirectUrl }]
+        });
+      }
+
+      case 'r': { // redirect - handled by unified logic above
+        const sessionKey = 'session_' + session_id;
+        const clientSession = clientSessions.get(sessionKey);
+        if (!clientSession || !clientSession.challengeToken) {
+          return res.json({ success: false, c: [{ t: 'e', d: 'Session expired' }] });
+        }
+
+        const tokenData = redirectTokens.get(clientSession.challengeToken);
+        if (!tokenData) {
+          return res.json({ success: false, c: [{ t: 'e', d: 'Token expired' }] });
+        }
+
+        if (!tokenData.verifiedAt) {
+          return res.json({ success: false, c: [{ t: 'e', d: 'Verification required' }] });
+        }
+
+        if (tokenData.used) {
+          return res.json({ success: false, c: [{ t: 'e', d: 'Already used' }] });
+        }
+
+        // Get URL and mark as used
+        const redirectUrl = tokenData.shortUrl;
+        tokenData.used = true;
+
+        // Update database
+        try {
+          const shardIndex = getShardIndex(session_id);
+          const collection = await getDatabase(shardIndex);
+          await collection.updateOne(
+            { session_id: session_id },
+            { $set: { used: true, used_at: new Date() } }
+          );
+        } catch (err) {
+          console.error('[c] Final update error:', err.message);
+        }
+
+        // Clean up
+        setTimeout(() => {
+          redirectTokens.delete(clientSession.challengeToken);
+          clientSessions.delete(sessionKey);
         }, 5000);
 
         return res.json({
@@ -1558,12 +1641,12 @@ case 'c': { // click
 
       default:
         return res.json({ success: false, c: [{ t: 'e', d: 'Unknown command' }] });
+      }
+    } catch (error) {
+      console.error('[c] Error:', error.message);
+      return res.json({ success: false, c: [{ t: 'e', d: 'Server error' }] });
     }
-  } catch (error) {
-    console.error('[c] Error:', error.message);
-    return res.json({ success: false, c: [{ t: 'e', d: 'Server error' }] });
-  }
-});
+  });
 
 // ==========================================
 // 🛡️ PROTECTED ENDPOINTS
