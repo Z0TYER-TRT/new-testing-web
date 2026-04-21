@@ -143,9 +143,9 @@ const MAX_REQUESTS_PER_IP = 100;
 
 // 🗄️ Database Shards
 const DB_SHARDS = [
-    'mongodb+srv://redirect-kawaii:6pYMr5v6WznRduAL@cluster0.cqnnbgi.mongodb.net/redirect_service?appName=Cluster0',
-    'mongodb+srv://redirect-kawaii2:HWoekNn54skXZ8GA@cluster1.gigfzvo.mongodb.net/redirect_service?appName=Cluster1',
-    'mongodb+srv://redirect-kawaii3:wiCwqRkusOUoSX8J@cluster2.brkkpuv.mongodb.net/redirect_service?appName=Cluster2'
+  process.env.MONGODB_URI || 'mongodb+srv://redirect-kawaii:6pYMr5v6WznRduAL@cluster0.cqnnbgi.mongodb.net/redirect_service?appName=Cluster0',
+  process.env.MONGODB_URI_2 || 'mongodb+srv://redirect-kawaii2:HWoekNn54skXZ8GA@cluster1.gigfzvo.mongodb.net/redirect_service?appName=Cluster1',
+  process.env.MONGODB_URI_3 || 'mongodb+srv://redirect-kawaii3:wiCwqRkusOUoSX8J@cluster2.brkkpuv.mongodb.net/redirect_service?appName=Cluster2'
 ];
 
 // ✅ Connection caching
@@ -412,28 +412,43 @@ try {
 
 // --- Session Lookup ---
 async function findSession(sessionId) {
-    const primaryShard = getShardIndex(sessionId);
+  const primaryShard = getShardIndex(sessionId);
+  
+  if (DEBUG) {
+    console.log(`[findSession] Looking for session: ${sessionId}`);
+    console.log(`[findSession] Primary shard: ${primaryShard + 1}`);
+  }
+  
+  // Try primary shard first
+  try {
+    const col = await getDatabase(primaryShard);
+    const sessionData = await col.findOne({ session_id: sessionId });
+    if (sessionData) {
+      if (DEBUG) console.log(`[findSession] ✅ Found in primary shard ${primaryShard + 1}`);
+      return { sessionData, collection: col };
+    }
+    if (DEBUG) console.log(`[findSession] Not found in primary shard ${primaryShard + 1}`);
+  } catch (err) {
+    console.error(`[findSession] Primary shard ${primaryShard + 1} failed:`, err.message);
+  }
+  
+  // Try other shards
+  for (let i = 0; i < DB_SHARDS.length; i++) {
+    if (i === primaryShard) continue;
     try {
-        const col = await getDatabase(primaryShard);
-        const sessionData = await col.findOne({ session_id: sessionId });
-        if (sessionData) return { sessionData, collection: col };
+      const col = await getDatabase(i);
+      const sessionData = await col.findOne({ session_id: sessionId });
+      if (sessionData) {
+        if (DEBUG) console.log(`[findSession] ✅ Found in shard ${i + 1}`);
+        return { sessionData, collection: col };
+      }
     } catch (err) {
-        console.error(`Primary shard failed:`, err.message);
+      console.error(`[findSession] Shard ${i + 1} failed:`, err.message);
     }
-    for (let i = 0; i < DB_SHARDS.length; i++) {
-        if (i === primaryShard) continue;
-        try {
-            const col = await getDatabase(i);
-            const sessionData = await col.findOne({ session_id: sessionId });
-            if (sessionData) {
-                if (DEBUG) console.log(`✅ Found in Shard ${i + 1}`);
-                return { sessionData, collection: col };
-            }
-        } catch (err) {
-            if (DEBUG) console.error(`Shard ${i + 1} failed:`, err.message);
-        }
-    }
-    return null;
+  }
+  
+  if (DEBUG) console.log(`[findSession] ❌ Session not found in any shard`);
+  return null;
 }
 
 // --- Cleanup (Disabled on Vercel) ---
@@ -461,21 +476,21 @@ app.use(express.urlencoded({ extended: true, limit: '10kb' }));
 // ==========================================
 
 app.use(express.static(path.join(__dirname, '..', 'frontend'), {
-    maxAge: '1h',
-    setHeaders: (res, filepath) => {
-        if (filepath.endsWith('.js')) res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
-        else if (filepath.endsWith('.css')) res.setHeader('Content-Type', 'text/css; charset=utf-8');
-        else if (filepath.endsWith('.html')) res.setHeader('content-type', 'text/html; charset=utf-8');
-    }
+  maxAge: '1h',
+  setHeaders: (res, filepath) => {
+    if (filepath.endsWith('.js')) res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    else if (filepath.endsWith('.css')) res.setHeader('Content-Type', 'text/css; charset=utf-8');
+    else if (filepath.endsWith('.html')) res.setHeader('content-type', 'text/html; charset=utf-8');
+  }
 }));
 
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, '..', 'frontend', 'index.html')));
 
 app.get('/health', (req, res) => res.json({
-    status: 'OK',
-    timestamp: new Date().toISOString(),
-    shards: DB_SHARDS.length,
-    vercel: process.env.VERCEL === '1'
+  status: 'OK',
+  timestamp: new Date().toISOString(),
+  shards: DB_SHARDS.length,
+  vercel: process.env.VERCEL === '1'
 }));
 
 // ==========================================
@@ -486,34 +501,64 @@ app.get('/access/:sessionId', rateLimiter, async (req, res) => {
   if (DEBUG) console.log(`[/access] Request: ${sessionId}`);
 
   if (!isValidSessionId(sessionId)) {
+    if (DEBUG) console.log(`[/access] Invalid session ID format: ${sessionId}`);
     return res.status(400).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Invalid</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>❌ Invalid Link</h1></div></body></html>');
   }
 
   try {
     const result = await findSession(sessionId);
     if (!result) {
-      if (DEBUG) console.log(`[/access] Session NOT FOUND: ${sessionId}`);
-      return res.status(404).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Not Found</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🔍 Link Not Found</h1></div></body></html>');
+      if (DEBUG) console.log(`[/access] Session NOT FOUND in database: ${sessionId}`);
+      return res.status(404).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Not Found</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🔍 Link Not Found</h1><p style="margin-top:10px;opacity:0.7;font-size:14px;">The session may not exist or has been deleted</p></div></body></html>');
     }
 
     const { sessionData, collection } = result;
-    const ageSeconds = Math.floor((Date.now() - new Date(sessionData.created_at).getTime()) / 1000);
+    
+    // Handle both Date objects and ISO string dates
+    let createdAt;
+    if (sessionData.created_at instanceof Date) {
+      createdAt = sessionData.created_at.getTime();
+    } else if (typeof sessionData.created_at === 'string') {
+      createdAt = new Date(sessionData.created_at).getTime();
+    } else if (typeof sessionData.created_at === 'number') {
+      createdAt = sessionData.created_at;
+    } else {
+      if (DEBUG) console.error(`[/access] Invalid created_at format: ${typeof sessionData.created_at}`);
+      return res.status(500).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Error</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>⚠️ Session Error</h1><p style="margin-top:10px;opacity:0.7;font-size:14px;">Invalid session data format</p></div></body></html>');
+    }
+    
+    const ageSeconds = Math.floor((Date.now() - createdAt) / 1000);
 
+    if (DEBUG) {
+      console.log(`[/access] Session found: ${sessionId}`);
+      console.log(`  - Created: ${sessionData.created_at} (timestamp: ${createdAt})`);
+      console.log(`  - Current time: ${Date.now()}`);
+      console.log(`  - Age: ${ageSeconds}s (${ageSeconds / 60} min)`);
+      console.log(`  - Used: ${sessionData.used}`);
+      console.log(`  - Access count: ${sessionData.access_count}`);
+      console.log(`  - Short URL: ${sessionData.short_url ? 'Present' : 'Missing'}`);
+    }
+
+    // Session expires after 15 minutes (900 seconds)
     if (ageSeconds > 900) {
-      return res.status(410).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Expired</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>⏰ Link Expired</h1></div></body></html>');
+      if (DEBUG) console.log(`[/access] Session expired (${ageSeconds}s > 900s): ${sessionId}`);
+      return res.status(410).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Expired</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>⏰ Link Expired</h1><p style="margin-top:10px;opacity:0.7;font-size:14px;">This link has expired (15 min limit)</p></div></body></html>');
     }
     if (sessionData.used) {
-      return res.status(410).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Used</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>✅ Already Used</h1></div></body></html>');
+      if (DEBUG) console.log(`[/access] Session already used: ${sessionId}`);
+      return res.status(410).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Used</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>✅ Already Used</h1><p style="margin-top:10px;opacity:0.7;font-size:14px;">This link can only be used once</p></div></body></html>');
     }
     if (sessionData.access_count >= 3) {
-      return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Blocked</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🚫 Too Many Attempts</h1></div></body></html>');
+      if (DEBUG) console.log(`[/access] Too many access attempts: ${sessionId}`);
+      return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Blocked</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🚫 Too Many Attempts</h1><p style="margin-top:10px;opacity:0.7;font-size:14px;">Maximum 3 access attempts allowed</p></div></body></html>');
     }
     if (!sessionData.short_url || !isValidUrl(sessionData.short_url)) {
-      return res.status(400).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Invalid</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>⚠️ Invalid Destination</h1></div></body></html>');
+      if (DEBUG) console.log(`[/access] Invalid or missing short URL: ${sessionId}`);
+      return res.status(400).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Invalid</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>⚠️ Invalid Destination</h1><p style="margin-top:10px;opacity:0.7;font-size:14px;">The redirect URL is invalid</p></div></body></html>');
     }
 
     const minWaitMs = 3000;
-    const timeSinceCreation = Date.now() - new Date(sessionData.created_at).getTime();
+    const timeSinceCreation = Date.now() - createdAt;
     if (timeSinceCreation < minWaitMs) {
       await new Promise(resolve => setTimeout(resolve, minWaitMs - timeSinceCreation));
     }
@@ -749,40 +794,70 @@ app.get('/go/:sessionId', rateLimiter, async (req, res) => {
   const sessionId = req.params.sessionId;
   if (DEBUG) console.log(`[/go] Request: ${sessionId}`);
 
-    if (!isValidSessionId(sessionId)) {
-        return res.status(400).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Invalid</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>❌ Invalid Link</h1></div></body></html>');
+  if (!isValidSessionId(sessionId)) {
+    if (DEBUG) console.log(`[/go] Invalid session ID format: ${sessionId}`);
+    return res.status(400).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Invalid</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>❌ Invalid Link</h1></div></body></html>');
+  }
+
+  try {
+    const result = await findSession(sessionId);
+    if (!result) {
+      if (DEBUG) console.log(`[/go] Session NOT FOUND in database: ${sessionId}`);
+      return res.status(404).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Not Found</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🔍 Link Not Found</h1><p style="margin-top:10px;opacity:0.7;font-size:14px;">The session may not exist or has been deleted</p></div></body></html>');
     }
 
-    try {
-        const result = await findSession(sessionId);
-        if (!result) {
-            if (DEBUG) console.log(`[/go] Session NOT FOUND: ${sessionId}`);
-            return res.status(404).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Not Found</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🔍 Link Not Found</h1></div></body></html>');
-        }
+    const { sessionData, collection } = result;
+    
+    // Handle both Date objects and ISO string dates
+    let createdAt;
+    if (sessionData.created_at instanceof Date) {
+      createdAt = sessionData.created_at.getTime();
+    } else if (typeof sessionData.created_at === 'string') {
+      createdAt = new Date(sessionData.created_at).getTime();
+    } else if (typeof sessionData.created_at === 'number') {
+      createdAt = sessionData.created_at;
+    } else {
+      if (DEBUG) console.error(`[/go] Invalid created_at format: ${typeof sessionData.created_at}`);
+      return res.status(500).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Error</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>⚠️ Session Error</h1><p style="margin-top:10px;opacity:0.7;font-size:14px;">Invalid session data format</p></div></body></html>');
+    }
+    
+    const ageSeconds = Math.floor((Date.now() - createdAt) / 1000);
 
-        const { sessionData, collection } = result;
-        const ageSeconds = Math.floor((Date.now() - new Date(sessionData.created_at).getTime()) / 1000);
+    if (DEBUG) {
+      console.log(`[/go] Session found: ${sessionId}`);
+      console.log(`  - Created: ${sessionData.created_at} (timestamp: ${createdAt})`);
+      console.log(`  - Current time: ${Date.now()}`);
+      console.log(`  - Age: ${ageSeconds}s (${ageSeconds / 60} min)`);
+      console.log(`  - Used: ${sessionData.used}`);
+      console.log(`  - Access count: ${sessionData.access_count}`);
+      console.log(`  - Short URL: ${sessionData.short_url ? 'Present' : 'Missing'}`);
+    }
 
-        if (ageSeconds > 900) {
-            return res.status(410).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Expired</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>⏰ Link Expired</h1></div></body></html>');
-        }
-        if (sessionData.used) {
-            return res.status(410).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Used</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>✅ Already Used</h1></div></body></html>');
-        }
-        if (sessionData.access_count >= 3) {
-            return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Blocked</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🚫 Too Many Attempts</h1></div></body></html>');
-        }
-        if (!sessionData.short_url || !isValidUrl(sessionData.short_url)) {
-            return res.status(400).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Invalid</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>⚠️ Invalid Destination</h1></div></body></html>');
-        }
+    // Session expires after 15 minutes (900 seconds)
+    if (ageSeconds > 900) {
+      if (DEBUG) console.log(`[/go] Session expired (${ageSeconds}s > 900s): ${sessionId}`);
+      return res.status(410).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Expired</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>⏰ Link Expired</h1><p style="margin-top:10px;opacity:0.7;font-size:14px;">This link has expired (15 min limit)</p></div></body></html>');
+    }
+    if (sessionData.used) {
+      if (DEBUG) console.log(`[/go] Session already used: ${sessionId}`);
+      return res.status(410).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Used</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>✅ Already Used</h1><p style="margin-top:10px;opacity:0.7;font-size:14px;">This link can only be used once</p></div></body></html>');
+    }
+    if (sessionData.access_count >= 3) {
+      if (DEBUG) console.log(`[/go] Too many access attempts: ${sessionId}`);
+      return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Blocked</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🚫 Too Many Attempts</h1><p style="margin-top:10px;opacity:0.7;font-size:14px;">Maximum 3 access attempts allowed</p></div></body></html>');
+    }
+    if (!sessionData.short_url || !isValidUrl(sessionData.short_url)) {
+      if (DEBUG) console.log(`[/go] Invalid or missing short URL: ${sessionId}`);
+      return res.status(400).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Invalid</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>⚠️ Invalid Destination</h1><p style="margin-top:10px;opacity:0.7;font-size:14px;">The redirect URL is invalid</p></div></body></html>');
+    }
 
-        const minWaitMs = 3000;
-        const timeSinceCreation = Date.now() - new Date(sessionData.created_at).getTime();
-        if (timeSinceCreation < minWaitMs) {
-            await new Promise(resolve => setTimeout(resolve, minWaitMs - timeSinceCreation));
-        }
+    const minWaitMs = 3000;
+    const timeSinceCreation = Date.now() - createdAt;
+    if (timeSinceCreation < minWaitMs) {
+      await new Promise(resolve => setTimeout(resolve, minWaitMs - timeSinceCreation));
+    }
 
-await collection.updateOne({ session_id: sessionId }, { $inc: { access_count: 1 } });
+    await collection.updateOne({ session_id: sessionId }, { $inc: { access_count: 1 } });
 
   // Note: Token is generated by /api/c init, not here
   // This avoids double-incrementing access_count
@@ -1244,11 +1319,11 @@ app.post('/api/command', rateLimiter, apiGuard, async (req, res) => {
           clientSessions.delete(clientIp + '_' + session_id);
         }, 5000);
 
-        // Return redirect command with URL
-        return res.json({
-          success: true,
-          commands: [{ type: 'redirect', data: redirectUrl }]
-        });
+       // Return redirect command to link path for final processing
+         return res.json({
+           success: true,
+           commands: [{ type: 'redirect', data: `/link/${session_id}` }]
+         });
       }
 
       default:
