@@ -243,6 +243,11 @@ function botGuard(req, res, next) {
   const fullUrl = req.originalUrl || '';
   const clientIp = getClientIp(req);
 
+  // Skip bot guard for static assets (CSS, JS, images)
+  if (/\.(css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$/i.test(fullUrl)) {
+    return next();
+  }
+
   // Check for blocked user agents
   if (BLOCKED_USER_AGENTS.some(bot => userAgent.includes(bot))) {
     if (DEBUG) console.log(`[BotGuard] BLOCKED UA: ${userAgent.substring(0, 50)}`);
@@ -255,20 +260,22 @@ function botGuard(req, res, next) {
     return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Access Blocked</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🚫 Access Blocked</h1></div></body></html>');
   }
 
-  // Check for external referers (bypass tools often have none or external)
-  if (referer) {
+  // Only check referer if it exists (Telegram often doesn't send referer)
+  if (referer && referer.trim() !== '') {
     try {
       const refererHost = new URL(referer).hostname;
       // Use dynamic referer check that supports preview URLs
       const isAllowed = isAllowedReferer(referer) ||
-        ALLOWED_REFERERS.some(allowed => refererHost === allowed || refererHost.endsWith('.' + allowed));
-      if (!isAllowed && !refererHost.includes('t.me') && !refererHost.includes('telegram')) {
+      ALLOWED_REFERERS.some(allowed => refererHost === allowed || refererHost.endsWith('.' + allowed));
+      // Allow telegram domains and t.me
+      const isTelegram = refererHost.includes('t.me') || refererHost.includes('telegram');
+      if (!isAllowed && !isTelegram) {
         if (DEBUG) console.log(`[BotGuard] BLOCKED REFERER: ${refererHost}`);
         return res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Access Blocked</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🚫 External Access Blocked</h1></div></body></html>');
       }
     } catch (e) {
-      // Invalid referer, allow but log
-      if (DEBUG) console.log(`[BotGuard] INVALID REFERER`);
+      // Invalid referer URL, allow but log
+      if (DEBUG) console.log(`[BotGuard] INVALID REFERER URL`);
     }
   }
 
@@ -292,17 +299,30 @@ function apiGuard(req, res, next) {
   const host = req.get('Host') || '';
   const clientIp = getClientIp(req);
 
+  // Allow requests from Telegram (no referer/origin is OK for Telegram)
+  const isFromTelegram = referer.includes('t.me') || referer.includes('telegram');
+  if (isFromTelegram) {
+    if (DEBUG) console.log(`[APIGuard] Allowing Telegram request`);
+    return next();
+  }
+
+  // For development/testing, allow localhost
+  if (process.env.NODE_ENV !== 'production' && !referer && !origin) {
+    return next();
+  }
+
   // API must come from browser with valid referer/origin
   if (!referer && !origin) {
-    if (DEBUG) console.log(`[APIGuard] NO REFERER from ${clientIp}`);
-    return res.status(403).json({ success: false, code: 'INVALID_ORIGIN' });
+    if (DEBUG) console.log(`[APIGuard] NO REFERER from ${clientIp} - ALLOWING FOR NOW`);
+    // Don't block, just log
+    return next();
   }
 
   // Validate using dynamic function that supports preview URLs
   const source = referer || origin;
   const isValidSource = isAllowedReferer(source) ||
-    ALLOWED_ORIGINS.some(pattern => pattern.test(source)) ||
-    ALLOWED_REFERERS.some(allowed => host === allowed || host.endsWith('.' + allowed));
+  ALLOWED_ORIGINS.some(pattern => pattern.test(source)) ||
+  ALLOWED_REFERERS.some(allowed => host === allowed || host.endsWith('.' + allowed));
 
   if (!isValidSource) {
     if (DEBUG) console.log(`[APIGuard] INVALID SOURCE: ${source.substring(0, 100)}`);
@@ -1533,7 +1553,8 @@ app.post('/api/c', rateLimiter, apiGuard, async (req, res) => {
 app.use(botGuard);
 
 app.get('/blocked', (req, res) => {
-    res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Blocked</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🚫 Access Blocked</h1></div></body></html>');
+  if (DEBUG) console.log(`[Blocked] User blocked at ${req.path}`);
+  res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Blocked</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🚫 Access Blocked</h1></div></body></html>');
 });
 
 app.post('/api/store-session', async (req, res) => {
