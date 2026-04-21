@@ -886,11 +886,46 @@ app.post('/api/get-redirect-url', rateLimiter, apiGuard, async (req, res) => {
 });
 
 // ==========================================
-// 2. LEGACY LINK PATH (DEPRECATED - BLOCKS DIRECT ACCESS)
+// 2. LEGACY LINK PATH - RESTORED FOR OLD WORKFLOW
 // ==========================================
 app.get('/link/:sessionId', rateLimiter, async (req, res) => {
-  // Block direct access - only token-based access allowed
-  res.status(403).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Blocked</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🚫 Direct Access Blocked</h1><p style="margin-top:10px;color:rgba(255,255,255,0.7)">Please use the verification page.</p></div></body></html>');
+  const sessionId = req.params.sessionId;
+  
+  if (!isValidSessionId(sessionId)) {
+    return res.status(400).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Invalid</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>❌ Invalid Link</h1></div></body></html>');
+  }
+
+  try {
+    const result = await findSession(sessionId);
+    if (!result) {
+      return res.status(404).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Not Found</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>🔍 Link Not Found</h1></div></body></html>');
+    }
+
+    const { sessionData } = result;
+    const ageSeconds = Math.floor((Date.now() - new Date(sessionData.created_at).getTime()) / 1000);
+
+    if (ageSeconds > 900) {
+      return res.status(410).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Expired</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>⏰ Link Expired</h1></div></body></html>');
+    }
+    if (sessionData.used) {
+      return res.status(410).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Used</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>✅ Already Used</h1></div></body></html>');
+    }
+    if (!sessionData.short_url || !isValidUrl(sessionData.short_url)) {
+      return res.status(400).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Invalid</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>⚠️ Invalid Destination</h1></div></body></html>');
+    }
+
+    // Mark as used
+    await result.collection.updateOne(
+      { session_id: sessionId },
+      { $set: { used: true, used_at: new Date() } }
+    );
+
+    // Redirect to final URL
+    res.redirect(sessionData.short_url);
+  } catch (error) {
+    console.error('[/link] Error:', error.message);
+    return res.status(500).send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Error</title></head><body style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;text-align:center;padding:20px;"><div><h1>⚠️ Server Error</h1></div></body></html>');
+  }
 });
 
 // ==========================================
