@@ -19,7 +19,7 @@ if (!API_SECRET_KEY) {
 
 // 🎫 Token storage for secure redirect flow
 const redirectTokens = new Map();
-const TOKEN_EXPIRY_MS = 2 * 60 * 1000; // 2 minutes
+const TOKEN_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes - increased for better UX
 
 // Anti-replay: Track used nonces
 const usedNonces = new Set();
@@ -919,7 +919,7 @@ app.get('/go/:sessionId', rateLimiter, async (req, res) => {
   </div>
   </div>
   <script>${ANTI_BYPASS_JS}</script>
-  <script src="/script.js"></script>
+<script src="/script.js?v=2"></script>
   })();
   </script>
   </body>
