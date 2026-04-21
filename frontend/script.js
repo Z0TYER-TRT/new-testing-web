@@ -2,11 +2,18 @@
 (function() {
   'use strict';
 
-  const ui = {};
-  ['mainContainer', 'title', 'message', 'status-message', 'clickVerifyBtn',
-   'shieldWrapper', 'loaderWrapper', 'checkMark', 'crossMark', 'progressBar', 'progress',
-   'countdownBox', 'countdown'
-  ].forEach(id => ui[id] = document.getElementById(id));
+const ui = {};
+const uiIds = ['mainContainer', 'title', 'message', 'status-message', 'clickVerifyBtn',
+'shieldWrapper', 'loaderWrapper', 'checkMark', 'crossMark', 'progressBar', 'progress',
+'countdownBox', 'countdown'];
+
+uiIds.forEach(id => {
+  const el = document.getElementById(id);
+  if (!el) {
+    console.warn(`Element #${id} not found!`);
+  }
+  ui[id] = el;
+});
 
   // Helper: add class for CSS animations
   function addClass(el, name) {
@@ -51,36 +58,57 @@ function isAllowedRedirect(url) {
 const cmds = {
   // Init: Hide loader, show button
   i: () => {
+    console.log('Init command received');
     hide(ui.loaderWrapper);
     hide(ui.shieldWrapper);
-    if (ui.clickVerifyBtn) ui.clickVerifyBtn.style.display = 'inline-block';
-    if (ui.statusMessage) ui.statusMessage.textContent = 'Click the button to continue';
-  },
-
-  // UI updates with proper animations
-  ui: (d) => {
-    const el = ui[d.id];
-    if (!el) return;
-
-    // Handle text updates with fade
-    if (d.text !== undefined) {
-      el.style.opacity = '0.6';
-      setTimeout(() => {
-        el.textContent = d.text;
-        el.style.opacity = '1';
-      }, 150);
+    
+    if (ui.clickVerifyBtn) {
+      console.log('Showing click button');
+      ui.clickVerifyBtn.style.display = 'inline-block';
+      ui.clickVerifyBtn.style.opacity = '1';
+      ui.clickVerifyBtn.style.visibility = 'visible';
+      ui.clickVerifyBtn.style.pointerEvents = 'auto';
+      ui.clickVerifyBtn.style.cursor = 'pointer';
     }
-
-    // Handle class additions
-    if (d.class) addClass(el, d.class);
-
-    // Handle display changes
-    if (d.display === 'none') hide(el);
-    if (d.display) show(el, d.display);
-
-    // Handle inline styles
-    if (d.styles) Object.assign(el.style, d.styles);
+    
+    if (ui.statusMessage) {
+      ui.statusMessage.textContent = 'Click the button to continue';
+    }
+    
+    if (ui.message) {
+      ui.message.textContent = 'Human verification required';
+    }
   },
+
+// UI updates with proper animations
+ui: (d) => {
+  const el = ui[d.id];
+  if (!el) {
+    console.warn(`UI element not found: ${d.id}`);
+    return;
+  }
+
+  console.log(`UI update: ${d.id}`, d);
+
+  // Handle text updates with fade
+  if (d.text !== undefined) {
+    el.style.opacity = '0.6';
+    setTimeout(() => {
+      el.textContent = d.text;
+      el.style.opacity = '1';
+    }, 150);
+  }
+
+  // Handle class additions
+  if (d.class) addClass(el, d.class);
+
+  // Handle display changes
+  if (d.display === 'none') hide(el);
+  if (d.display) show(el, d.display);
+
+  // Handle inline styles
+  if (d.styles) Object.assign(el.style, d.styles);
+},
 
   // Show checkmark with animation
   check: () => {
@@ -202,12 +230,20 @@ async function send(action) {
     });
     clearTimeout(timeout);
 
-    if (!res.ok) {
-      const text = await res.text();
-      console.error('API Error:', res.status, text);
-      cmds.error(`Server error: ${res.status}`);
-      return;
-    }
+if (!res.ok) {
+  const text = await res.text();
+  console.error('API Error:', res.status, text);
+  
+  // Show button if it was hidden
+  if (ui.clickVerifyBtn) {
+    ui.clickVerifyBtn.disabled = false;
+    ui.clickVerifyBtn.textContent = '👆 Click to Continue';
+    ui.clickVerifyBtn.style.cursor = 'pointer';
+  }
+  
+  cmds.error(`Server error: ${res.status}`);
+  return;
+}
 
     const data = await res.json();
 
@@ -240,13 +276,39 @@ if (data.c) {
 
 // Setup click handler
 if (ui.clickVerifyBtn) {
-  ui.clickVerifyBtn.onclick = () => {
-    ui.clickVerifyBtn.disabled = true;
-    ui.clickVerifyBtn.textContent = 'Verifying...';
+  console.log('Click button found, attaching handler');
+  ui.clickVerifyBtn.addEventListener('click', function(e) {
+    e.preventDefault();
+    console.log('Button clicked!');
+    
+    // Prevent multiple clicks
+    if (this.disabled) {
+      console.log('Button already clicked, ignoring');
+      return;
+    }
+    
+    this.disabled = true;
+    this.textContent = 'Verifying...';
+    this.style.cursor = 'wait';
+    
+    // Update status message
+    if (ui.statusMessage) {
+      ui.statusMessage.textContent = 'Verifying your click...';
+    }
+    
+    console.log('Sending click verification...');
     send('c');
-  };
+  });
+  
+  // Make sure button is visible
+  ui.clickVerifyBtn.style.display = 'inline-block';
+  ui.clickVerifyBtn.style.opacity = '1';
+  ui.clickVerifyBtn.style.pointerEvents = 'auto';
+} else {
+  console.error('Click button not found!');
 }
 
 // Auto-start initialization
+console.log('Starting initialization...');
 send('i');
 })();
