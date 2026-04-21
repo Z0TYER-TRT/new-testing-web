@@ -1,6 +1,28 @@
 // 🔒 MINIMAL FRONTEND - All animations preserved
 (function() {
-  'use strict';
+'use strict';
+
+// Create debug overlay first
+const debugOverlay = document.createElement('div');
+debugOverlay.id = 'debug-overlay';
+debugOverlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:150px;background:rgba(0,0,0,0.8);color:#0f0;font-family:monospace;font-size:12px;padding:10px;overflow-y:auto;z-index:999999;display:none;';
+debugOverlay.innerHTML = '<div style="position:sticky;top:0;background:#000;padding:5px;font-weight:bold;">DEBUG LOG (click to close) ▼</div><div id="debug-logs"></div>';
+debugOverlay.onclick = function() { this.style.display = 'none'; };
+if (document.body) document.body.appendChild(debugOverlay);
+
+const debugLogs = document.getElementById('debug-logs');
+window.debugLog = function(...args) {
+  const msg = args.join(' ');
+  console.log(msg);
+  if (debugLogs) {
+    const line = document.createElement('div');
+    line.textContent = '> ' + msg;
+    debugLogs.appendChild(line);
+    debugLogs.scrollTop = debugLogs.scrollHeight;
+  }
+};
+
+window.debugLog('Starting script...');
 
 const ui = {};
 const uiIds = ['mainContainer', 'title', 'message', 'status-message', 'clickVerifyBtn',
@@ -10,7 +32,7 @@ const uiIds = ['mainContainer', 'title', 'message', 'status-message', 'clickVeri
 uiIds.forEach(id => {
   const el = document.getElementById(id);
   if (!el) {
-    console.warn(`Element #${id} not found!`);
+    window.debugLog(`Element #${id} not found!`);
   }
   ui[id] = el;
 });
@@ -323,34 +345,7 @@ if (ui.clickVerifyBtn) {
   window.debugLog('Buttons in DOM:', document.querySelectorAll('button').length);
 }
 
-// Create debug overlay (visible even without dev tools)
-function createDebugOverlay() {
-  const overlay = document.createElement('div');
-  overlay.id = 'debug-overlay';
-  overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:150px;background:rgba(0,0,0,0.8);color:#0f0;font-family:monospace;font-size:12px;padding:10px;overflow-y:auto;z-index:999999;display:none;';
-  overlay.innerHTML = '<div style="position:sticky;top:0;background:#000;padding:5px;font-weight:bold;">DEBUG LOG (click to close) ▼</div><div id="debug-logs"></div>';
-  overlay.onclick = function() { this.style.display = 'none'; };
-  document.body.appendChild(overlay);
-  
-  // Store reference
-  window.debugOverlay = overlay;
-  window.debugLogs = document.getElementById('debug-logs');
-  
-  // Override console.log to also show in overlay
-  const originalLog = console.log;
-  window.debugLog = function(msg) {
-    originalLog.call(console, msg);
-    if (window.debugLogs) {
-      const line = document.createElement('div');
-      line.textContent = '> ' + msg;
-      window.debugLogs.appendChild(line);
-      window.debugLogs.scrollTop = window.debugLogs.scrollHeight;
-    }
-  };
-}
-
-// Create overlay and start initialization
-createDebugOverlay();
+// Auto-start initialization
 window.debugLog('Starting initialization...');
 send('i');
 })();
